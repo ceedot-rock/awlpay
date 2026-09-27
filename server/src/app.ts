@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isAsset, isRail, type Asset, type Rail, type RateBook } from '@awlpay/sdk';
-import { liveCoinbaseBook } from './prices.js';
+import { liveConsensusBook } from './prices.js';
 import { SettlementEngine } from './settlement.js';
 import { WalletStore } from './store.js';
 import type { Chain, Tier } from './types.js';
@@ -37,7 +37,7 @@ function parseTier(raw: string | undefined, present: boolean): Tier | { error: s
 
 export function createApp(
   store = new WalletStore(),
-  loadBook: () => Promise<RateBook> = liveCoinbaseBook,
+  loadBook: () => Promise<RateBook> = liveConsensusBook,
 ) {
   const engine = new SettlementEngine(store, loadBook);
 

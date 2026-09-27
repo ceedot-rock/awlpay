@@ -46,8 +46,10 @@ export interface Rate {
 
 export interface RateBook {
   rates: Record<Asset, Rate>;
-  source: 'coinbase_spot' | 'test';
+  source: 'coinbase_spot' | 'consensus' | 'test';
   as_of?: string;
+  /** ECB reference rates, foreign currency per 1 USD. Not mixed into coin prices. */
+  fx?: { date: string; per_usd: Record<string, number> };
 }
 
 /** Build a book from whole-unit USD cent prices. USD is always 1 cent per cent. */

@@ -8,6 +8,13 @@ import {
   type Tier,
 } from '@awlpay/sdk';
 import type { WalletStore } from './store.js';
+
+function refuseReason(err: unknown): string {
+  if (err instanceof Error && err.message.startsWith('refuse=')) {
+    return err.message.slice('refuse='.length).split(':')[0] || 'price_unavailable';
+  }
+  return 'price_unavailable';
+}
 import type {
   ConvertSettleRequest,
   QuoteResult,
@@ -48,8 +55,8 @@ export class SettlementEngine {
     let book: RateBook;
     try {
       book = await this.loadBook();
-    } catch {
-      return { error: 'refuse' as const, reason: 'price_unavailable' };
+    } catch (err) {
+      return { error: 'refuse' as const, reason: refuseReason(err) };
     }
     return quoteConversion(pay_asset, pay_amount_minor, accepted_asset, tier, book, ctx, rail);
   }
@@ -115,8 +122,8 @@ export class SettlementEngine {
     let book: RateBook;
     try {
       book = await this.loadBook();
-    } catch {
-      return { error: 'refuse', reason: 'price_unavailable' };
+    } catch (err) {
+      return { error: 'refuse', reason: refuseReason(err) };
     }
     const quoted = quoteConversion(
       req.pay_asset,
