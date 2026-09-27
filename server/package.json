@@ -1,0 +1,22 @@
+{
+  "name": "@awlpay/server",
+  "version": "0.1.0",
+  "description": "AwLPay SettlementEngine local HTTP API (mock settlement)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "tsx --test test/fees.test.ts test/integration.test.ts"
+  },
+  "dependencies": {
+    "@awlpay/sdk": "file:../sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "license": "UNLICENSED"
+}
