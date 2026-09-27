@@ -31,7 +31,8 @@ function refreshWalletSelects() {
     wallets.forEach((w) => {
       const opt = document.createElement('option');
       opt.value = w.id;
-      opt.textContent = `${w.id} · ${w.chain}`;
+      const tag = w.kind === 'agent' ? 'agent' : 'personal';
+      opt.textContent = `${w.id} · ${w.chain} · ${tag}`;
       sel.appendChild(opt);
     });
     if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
@@ -51,9 +52,10 @@ function renderWalletList() {
     <article class="wallet-card" data-id="${w.id}">
       <div class="wallet-card__top">
         <span class="chain-pill" data-chain="${w.chain}">${w.chain}</span>
+        <span class="kind-pill" data-kind="${w.kind || 'personal'}">${w.kind === 'agent' ? 'Agent' : 'Personal'}</span>
         <code class="mono">${w.id}</code>
       </div>
-      <p class="muted small">Owner: ${escapeHtml(w.owner_id)}</p>
+      <p class="muted small">Owner: ${escapeHtml(w.owner_id)}${w.kind === 'agent' ? ' · session 15m · no long-term key' : ''}</p>
       <p class="muted small mono trunc">${escapeHtml(w.address)}</p>
       <button type="button" class="btn btn--ghost btn--sm" data-check-balance="${w.id}">Check balance</button>
       <pre class="result" hidden data-balance-out="${w.id}"></pre>
@@ -89,6 +91,19 @@ function initTabs() {
   });
 }
 
+function initAgentToggle() {
+  const input = $('#agent-wallet');
+  const hint = $('#agent-wallet-hint');
+  if (!input || !hint) return;
+  const paint = () => {
+    hint.textContent = input.checked
+      ? 'Agent wallet. 15-minute session. One settle. The long-term key stays sealed.'
+      : 'Personal wallet. You hold the key. The accepted asset stays yours.';
+  };
+  input.addEventListener('change', paint);
+  paint();
+}
+
 function initCreateWallet() {
   const form = $('#form-create-wallet');
   const status = $('#create-status');
@@ -99,15 +114,24 @@ function initCreateWallet() {
     btn.disabled = true;
     setStatus(status, 'Creating wallet…');
     try {
+      const agent = fd.get('agent_wallet') === 'on';
       const res = await createWallet({
         owner_id: fd.get('owner_id'),
         chain: fd.get('chain'),
+        agent_wallet: agent,
       });
       if (res.error) {
         setStatus(status, res.error, 'error');
       } else {
-        setStatus(status, `Created ${res.id} on ${res.chain}. Demo stub — not live.`, 'ok');
+        setStatus(
+          status,
+          agent
+            ? `Agent wallet ${res.id} on ${res.chain}. Session only — not live money.`
+            : `Created ${res.id} on ${res.chain}. Demo stub — not live.`,
+          'ok',
+        );
         form.reset();
+        $('#agent-wallet').dispatchEvent(new Event('change'));
         renderWalletList();
         refreshWalletSelects();
       }
@@ -245,6 +269,7 @@ function initBalanceLookup() {
 
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
+  initAgentToggle();
   initCreateWallet();
   initBalanceLookup();
   initQuote();
