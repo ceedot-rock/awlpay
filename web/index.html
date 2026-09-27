@@ -13,6 +13,7 @@
     />
     <link rel="icon" type="image/webp" href="./assets/logo-a-mark.webp" />
     <link rel="stylesheet" href="./css/styles.css" />
+    <link rel="stylesheet" href="./css/agent-wallet.css" />
   </head>
   <body>
     <header class="site-header">
@@ -56,7 +57,7 @@
         <div class="grid-2">
           <div class="card">
             <h2>Create wallet</h2>
-            <p class="lede">Pick a chain. You get a demo wallet id back — nothing hits a live network.</p>
+            <p class="lede">Pick a chain. Turn on Agent wallet for a 15-minute session that cannot hold the long-term key.</p>
             <form class="form" id="form-create-wallet">
               <div class="field">
                 <label for="owner_id">Owner id</label>
@@ -77,6 +78,13 @@
                   <option value="ethereum">Ethereum</option>
                 </select>
               </div>
+              <label class="switch-row">
+                <span>
+                  <span class="switch-row__title">Agent wallet</span>
+                  <span class="hint" id="agent-wallet-hint">Personal wallet. You hold the key. The accepted asset stays yours.</span>
+                </span>
+                <input id="agent-wallet" name="agent_wallet" type="checkbox" role="switch" />
+              </label>
               <div class="actions">
                 <button class="btn btn--primary" type="submit">Create wallet</button>
               </div>
@@ -165,9 +173,7 @@
               </li>
               <li>
                 <strong>Pro · $39/mo</strong>
-                <span class="muted small"
-                  >$0 platform fee under $30k volume or 500 txs; overage falls back to free formula</span
-                >
+                <span class="muted small">$0 platform fee under $30k volume or 500 txs; overage falls back to free formula</span>
               </li>
               <li>
                 <strong>L33t · $799/mo</strong>
@@ -183,32 +189,20 @@
           <h2>Settle</h2>
           <p class="lede">
             Anything→anything only when there’s value, a path, and fees that clear.
-            Uncheck the toggles below to see a clean refuse.
+            An agent wallet can settle once inside its 15-minute session.
           </p>
           <form class="form" id="form-settle">
             <div class="row cols-2">
               <div class="field">
                 <label for="from_wallet">From wallet</label>
-                <select
-                  id="from_wallet"
-                  name="from_wallet"
-                  data-wallet-select
-                  data-placeholder="Pick from wallet"
-                  required
-                >
+                <select id="from_wallet" name="from_wallet" data-wallet-select data-placeholder="Pick from wallet" required>
                   <option value="">Pick from wallet</option>
                 </select>
                 <span class="hint">Or create wallets on the Wallets tab first</span>
               </div>
               <div class="field">
                 <label for="to_wallet">To wallet</label>
-                <select
-                  id="to_wallet"
-                  name="to_wallet"
-                  data-wallet-select
-                  data-placeholder="Pick to wallet"
-                  required
-                >
+                <select id="to_wallet" name="to_wallet" data-wallet-select data-placeholder="Pick to wallet" required>
                   <option value="">Pick to wallet</option>
                 </select>
               </div>
@@ -216,15 +210,7 @@
             <div class="row cols-2">
               <div class="field">
                 <label for="settle-amount">Amount (USD)</label>
-                <input
-                  id="settle-amount"
-                  name="amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value="25"
-                  required
-                />
+                <input id="settle-amount" name="amount" type="number" min="0.01" step="0.01" value="25" required />
               </div>
               <div class="field">
                 <label for="settle-tier">Tier</label>
@@ -235,12 +221,9 @@
                 </select>
               </div>
             </div>
-
             <fieldset class="checks" aria-describedby="settle-rules">
               <legend class="sr-only">Settle conditions</legend>
-              <p id="settle-rules" class="hint" style="margin: 0 0 0.35rem">
-                Stub conditions (demo switches):
-              </p>
+              <p id="settle-rules" class="hint" style="margin: 0 0 0.35rem">Stub conditions (demo switches):</p>
               <label>
                 <input type="checkbox" name="has_value" checked />
                 <span><strong>hasValue</strong> — there’s real value to move</span>
@@ -250,7 +233,6 @@
                 <span><strong>path</strong> — a settle path exists between from → to</span>
               </label>
             </fieldset>
-
             <div class="actions">
               <button class="btn btn--primary" type="submit">Settle (demo)</button>
             </div>

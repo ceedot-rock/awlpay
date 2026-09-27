@@ -1,0 +1,55 @@
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.switch-row__title { display: block; font-weight: 600; font-size: 0.92rem; }
+.switch-row input {
+  appearance: none;
+  width: 2.6rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  background: #243140;
+  border: 1px solid var(--border-strong);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+}
+.switch-row input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: #d5dee8;
+  transition: transform 0.15s;
+}
+.switch-row input:checked { background: var(--cyan); border-color: var(--cyan); }
+.switch-row input:checked::after { transform: translateX(1.1rem); background: #041018; }
+.switch-row input:focus-visible { box-shadow: var(--focus); }
+
+.kind-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(245, 197, 66, 0.14);
+  color: var(--warn);
+  border: 1px solid rgba(245, 197, 66, 0.35);
+}
+.kind-pill[data-kind="personal"] {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border-color: rgba(61, 214, 140, 0.3);
+}
+.wallet-card__top { gap: 0.4rem; }
