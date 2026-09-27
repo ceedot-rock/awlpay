@@ -1,0 +1,5 @@
+# bank run 2026-09-27T13:04:31-0400  source=exact/fixtures/pro_overage_volume.cuni
+bank: PASS — from=cuni to=py out=emit.py source_hash=385412c290b78d62
+bank: PASS — from=cuni to=go out=emit.go source_hash=385412c290b78d62
+bank: PASS — from=cuni to=js out=emit.js source_hash=385412c290b78d62
+bank: PASS — from=cuni to=sol out=emit.sol source_hash=385412c290b78d62

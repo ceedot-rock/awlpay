@@ -1,0 +1,56 @@
+# AwLPay FeeManager — CuNi exact SoT
+# Locked: docs/fee-manager-spec.md (2026-09-27)
+# Integer cents. Same stdout or refuse. No approximate mode.
+#
+# Law:
+#   free  → amount_cents * 10 / 1000 + 25 ; tier_applied=free
+#   pro   → 0 if volume_month_usd_cents < 3000000 AND txs_month < 500
+#           otherwise free formula with tier_applied=pro_overage
+#   l33t  → 0 ; tier_applied=l33t
+#   other → refuse=unknown_tier
+#
+# Bank fixtures bake inputs (CuNi has no argv seat in Bank v1).
+# Studio gate: py/go/js (+ sol when catalog seat proves).
+
+def free_formula(amount_cents: int) -> int do
+    ret amount_cents * 10 / 1000 + 25
+end
+
+def emit_fees(tier: str, amount_cents: int, volume_month_usd_cents: int, txs_month: int) -> int do
+    if tier == "l33t" do
+        say("platform_fee_cents=0")
+        say("tier_applied=l33t")
+        ret 0
+    end
+    if tier == "pro" do
+        if volume_month_usd_cents < 3000000 and txs_month < 500 do
+            say("platform_fee_cents=0")
+            say("tier_applied=pro")
+            ret 0
+        end
+        let f = free_formula(amount_cents)
+        say(`platform_fee_cents=${f}`)
+        say("tier_applied=pro_overage")
+        ret f
+    end
+    if tier == "free" do
+        let f = free_formula(amount_cents)
+        say(`platform_fee_cents=${f}`)
+        say("tier_applied=free")
+        ret f
+    end
+    say("refuse=unknown_tier")
+    ret -1
+end
+
+# Fixture gold (deterministic key=value pairs):
+# free $100.00 → 125
+emit_fees("free", 10000, 0, 0)
+# pro under BOTH caps
+emit_fees("pro", 10000, 100000, 10)
+# pro overage by volume (>= $30k)
+emit_fees("pro", 10000, 3000000, 10)
+# pro overage by txs (>= 500)
+emit_fees("pro", 10000, 100000, 500)
+# l33t unlimited 0
+emit_fees("l33t", 99999999, 0, 0)

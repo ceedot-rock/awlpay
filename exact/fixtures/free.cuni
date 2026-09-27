@@ -1,0 +1,36 @@
+# AwLPay FeeManager fixture: free
+# free tier: 1% + $0.25 on $100.00 → platform_fee_cents=125
+# SoT: exact/FeeManager.cuni · spec: docs/fee-manager-spec.md
+
+def free_formula(amount_cents: int) -> int do
+    ret amount_cents * 10 / 1000 + 25
+end
+
+def emit_fees(tier: str, amount_cents: int, volume_month_usd_cents: int, txs_month: int) -> int do
+    if tier == "l33t" do
+        say("platform_fee_cents=0")
+        say("tier_applied=l33t")
+        ret 0
+    end
+    if tier == "pro" do
+        if volume_month_usd_cents < 3000000 and txs_month < 500 do
+            say("platform_fee_cents=0")
+            say("tier_applied=pro")
+            ret 0
+        end
+        let f = free_formula(amount_cents)
+        say(`platform_fee_cents=${f}`)
+        say("tier_applied=pro_overage")
+        ret f
+    end
+    if tier == "free" do
+        let f = free_formula(amount_cents)
+        say(`platform_fee_cents=${f}`)
+        say("tier_applied=free")
+        ret f
+    end
+    say("refuse=unknown_tier")
+    ret -1
+end
+
+emit_fees("free", 10000, 0, 0)
