@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { calculateFees, quoteConversion, type Asset, type Tier } from '@awlpay/sdk';
+import {
+  calculateFees,
+  quoteConversion,
+  type Asset,
+  type Rail,
+  type RateBook,
+  type Tier,
+} from '@awlpay/sdk';
 import type { WalletStore } from './store.js';
 import type {
   ConvertSettleRequest,
@@ -10,7 +17,10 @@ import type {
 } from './types.js';
 
 export class SettlementEngine {
-  constructor(private store: WalletStore) {}
+  constructor(
+    private store: WalletStore,
+    private loadBook: () => Promise<RateBook>,
+  ) {}
 
   quote(
     amount_cents: number,
@@ -27,14 +37,21 @@ export class SettlementEngine {
     };
   }
 
-  quoteAny(
+  async quoteAny(
     pay_asset: Asset,
     pay_amount_minor: number,
     accepted_asset: Asset,
     tier: Tier = 'free',
     ctx?: { volume_month_usd_cents?: number; txs_month?: number },
+    rail: Rail = 'spot',
   ) {
-    return quoteConversion(pay_asset, pay_amount_minor, accepted_asset, tier, ctx);
+    let book: RateBook;
+    try {
+      book = await this.loadBook();
+    } catch {
+      return { error: 'refuse' as const, reason: 'price_unavailable' };
+    }
+    return quoteConversion(pay_asset, pay_amount_minor, accepted_asset, tier, book, ctx, rail);
   }
 
   settle(req: SettleRequest): SettlementReceipt | SettleRefuse {
@@ -88,32 +105,50 @@ export class SettlementEngine {
    * Payer sends any attested asset. Receiver is credited in their accepted asset.
    * Fee is extra, in the pay asset. No path or a fee that eats the value refuses.
    */
-  settleAny(req: ConvertSettleRequest): SettlementReceipt | SettleRefuse {
+  async settleAny(req: ConvertSettleRequest): Promise<SettlementReceipt | SettleRefuse> {
     const from = this.store.getWallet(req.from_wallet);
     const to = this.store.getWallet(req.to_wallet);
     if (!from || !to) return { error: 'refuse', reason: 'wallet_not_found' };
     if (req.from_wallet === req.to_wallet) return { error: 'refuse', reason: 'same_wallet' };
 
     const tier: Tier = req.tier ?? 'free';
-    const quoted = quoteConversion(req.pay_asset, req.pay_amount_minor, to.accepted_asset, tier, {
-      volume_month_usd_cents: req.volume_month_usd_cents,
-      txs_month: req.txs_month,
-    });
+    let book: RateBook;
+    try {
+      book = await this.loadBook();
+    } catch {
+      return { error: 'refuse', reason: 'price_unavailable' };
+    }
+    const quoted = quoteConversion(
+      req.pay_asset,
+      req.pay_amount_minor,
+      to.accepted_asset,
+      tier,
+      book,
+      {
+        volume_month_usd_cents: req.volume_month_usd_cents,
+        txs_month: req.txs_month,
+      },
+      req.rail ?? 'spot',
+    );
     if ('error' in quoted) return quoted;
 
-    const have = this.store.balanceOf(req.from_wallet, req.pay_asset) ?? 0;
-    if (have < quoted.pay_debit_minor) {
-      return { error: 'refuse', reason: 'insufficient_funds' };
+    const card = quoted.rail === 'credit' || quoted.rail === 'debit';
+    if (!card) {
+      const have = this.store.balanceOf(req.from_wallet, req.pay_asset) ?? 0;
+      if (have < quoted.pay_debit_minor) {
+        return { error: 'refuse', reason: 'insufficient_funds' };
+      }
+      this.store.applyConvert(
+        req.from_wallet,
+        quoted.pay_asset,
+        quoted.pay_debit_minor,
+        req.to_wallet,
+        quoted.accepted_asset,
+        quoted.accepted_amount_minor,
+      );
+    } else {
+      this.store.creditAsset(req.to_wallet, quoted.accepted_asset, quoted.accepted_amount_minor);
     }
-
-    this.store.applyConvert(
-      req.from_wallet,
-      quoted.pay_asset,
-      quoted.pay_debit_minor,
-      req.to_wallet,
-      quoted.accepted_asset,
-      quoted.accepted_amount_minor,
-    );
 
     const receipt: SettlementReceipt = {
       settlement_id: randomUUID(),
@@ -130,6 +165,9 @@ export class SettlementEngine {
       accepted_asset: quoted.accepted_asset,
       accepted_amount_minor: quoted.accepted_amount_minor,
       path: quoted.path,
+      rail: quoted.rail,
+      route_fee_cents: quoted.route_fee_cents,
+      card_charge_cents: quoted.card_charge_cents,
     };
     this.store.appendReceipt(receipt);
     return receipt;

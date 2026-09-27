@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { isAsset, type Asset } from '@awlpay/sdk';
+import { isAsset, isRail, type Asset, type Rail, type RateBook } from '@awlpay/sdk';
+import { liveCoinbaseBook } from './prices.js';
 import { SettlementEngine } from './settlement.js';
 import { WalletStore } from './store.js';
 import type { Chain, Tier } from './types.js';
@@ -34,8 +35,11 @@ function parseTier(raw: string | undefined, present: boolean): Tier | { error: s
   return tier;
 }
 
-export function createApp(store = new WalletStore()) {
-  const engine = new SettlementEngine(store);
+export function createApp(
+  store = new WalletStore(),
+  loadBook: () => Promise<RateBook> = liveCoinbaseBook,
+) {
+  const engine = new SettlementEngine(store, loadBook);
 
   const server = createServer(async (req, res) => {
     try {
@@ -121,6 +125,7 @@ export function createApp(store = new WalletStore()) {
           pay_asset?: string;
           pay_amount_minor?: number;
           accepted_asset?: string;
+          rail?: string;
           tier?: string;
           volume_month_usd_cents?: number;
           txs_month?: number;
@@ -138,12 +143,16 @@ export function createApp(store = new WalletStore()) {
           if (typeof body.pay_amount_minor !== 'number') {
             return send(res, 400, { error: 'refuse', reason: 'invalid_amount' });
           }
-          const quote = engine.quoteAny(
+          if (body.rail !== undefined && !isRail(body.rail)) {
+            return send(res, 400, { error: 'refuse', reason: 'invalid_rail' });
+          }
+          const quote = await engine.quoteAny(
             body.pay_asset,
             Math.floor(body.pay_amount_minor),
             body.accepted_asset,
             tierParsed,
             ctx,
+            (body.rail as Rail | undefined) ?? 'spot',
           );
           if ('error' in quote) return send(res, 400, quote);
           return send(res, 200, quote);
@@ -161,6 +170,7 @@ export function createApp(store = new WalletStore()) {
           amount_cents?: number;
           pay_asset?: string;
           pay_amount_minor?: number;
+          rail?: string;
           tier?: string;
           volume_month_usd_cents?: number;
           txs_month?: number;
@@ -174,11 +184,15 @@ export function createApp(store = new WalletStore()) {
           if (!isAsset(body.pay_asset) || typeof body.pay_amount_minor !== 'number') {
             return send(res, 400, { error: 'refuse', reason: body.pay_asset && isAsset(body.pay_asset) ? 'invalid_amount' : 'no_value' });
           }
-          const result = engine.settleAny({
+          if (body.rail !== undefined && !isRail(body.rail)) {
+            return send(res, 400, { error: 'refuse', reason: 'invalid_rail' });
+          }
+          const result = await engine.settleAny({
             from_wallet: body.from_wallet,
             to_wallet: body.to_wallet,
             pay_asset: body.pay_asset,
             pay_amount_minor: Math.floor(body.pay_amount_minor),
+            rail: body.rail as Rail | undefined,
             tier: tierParsed,
             volume_month_usd_cents: body.volume_month_usd_cents,
             txs_month: body.txs_month,
