@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="AwLPay wallets and settle demo — stubs only, not live money." />
+    <title>AwLPay — Wallets & Settle</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;650&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/webp" href="./assets/logo-a-mark.webp" />
+    <link rel="stylesheet" href="./css/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="./index.html">
+          <img
+            class="brand__mark"
+            src="./assets/logo-a-mark.webp"
+            width="40"
+            height="40"
+            alt="AwLPay mark"
+          />
+          <span class="brand__text">
+            <span class="brand__name">AwLPay</span>
+            <span class="brand__tag">Wallets & settle</span>
+          </span>
+        </a>
+        <span class="badge-demo" title="api.awlpay.com is not live">Demo / stubs</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Move value. See the fee first.</h1>
+        <p>
+          Create a wallet, check a balance, quote locked fees, then settle —
+          from → to, with a clear refuse when there’s no value or no path.
+          This face talks to local stubs, not live rails.
+        </p>
+      </section>
+
+      <div class="tabs" role="tablist" aria-label="AwLPay surfaces">
+        <button type="button" role="tab" data-tab="wallets" class="is-active" aria-selected="true">
+          Wallets
+        </button>
+        <button type="button" role="tab" data-tab="quote" aria-selected="false">Quote fees</button>
+        <button type="button" role="tab" data-tab="settle" aria-selected="false">Settle</button>
+      </div>
+
+      <section class="panel" data-panel="wallets" role="tabpanel" aria-label="Wallets">
+        <div class="grid-2">
+          <div class="card">
+            <h2>Create wallet</h2>
+            <p class="lede">Pick a chain. You get a demo wallet id back — nothing hits a live network.</p>
+            <form class="form" id="form-create-wallet">
+              <div class="field">
+                <label for="owner_id">Owner id</label>
+                <input
+                  id="owner_id"
+                  name="owner_id"
+                  type="text"
+                  autocomplete="username"
+                  placeholder="you@example.com or agent-id"
+                  required
+                />
+              </div>
+              <div class="field">
+                <label for="chain">Chain</label>
+                <select id="chain" name="chain" required>
+                  <option value="solana">Solana</option>
+                  <option value="base">Base</option>
+                  <option value="ethereum">Ethereum</option>
+                </select>
+              </div>
+              <div class="actions">
+                <button class="btn btn--primary" type="submit">Create wallet</button>
+              </div>
+              <p class="status" id="create-status" hidden></p>
+            </form>
+          </div>
+
+          <div class="card">
+            <h2>Balance lookup</h2>
+            <p class="lede">Paste any wallet id. Session wallets keep a stub balance; others return a zero stub.</p>
+            <form class="form" id="form-balance">
+              <div class="field">
+                <label for="balance_wallet_id">Wallet id</label>
+                <input
+                  id="balance_wallet_id"
+                  name="wallet_id"
+                  type="text"
+                  class="mono"
+                  placeholder="wlt_…"
+                  required
+                />
+              </div>
+              <div class="actions">
+                <button class="btn btn--ghost" type="submit">Get balance</button>
+              </div>
+              <pre class="result" id="balance-result" hidden></pre>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Your session wallets</h2>
+          <p class="lede">In-memory only. Refresh the page and they’re gone.</p>
+          <div class="wallet-list" id="wallet-list"></div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="quote" role="tabpanel" aria-label="Quote fees" hidden>
+        <div class="grid-2">
+          <div class="card">
+            <h2>Quote fees</h2>
+            <p class="lede">
+              Same math as the SDK <code>calculateFees</code> — free / pro / l33t locked tiers.
+            </p>
+            <form class="form" id="form-quote">
+              <div class="row cols-2">
+                <div class="field">
+                  <label for="quote-amount">Amount (USD)</label>
+                  <input id="quote-amount" name="amount" type="number" min="0" step="0.01" value="100" required />
+                </div>
+                <div class="field">
+                  <label for="quote-tier">Tier</label>
+                  <select id="quote-tier" name="tier">
+                    <option value="free">Free</option>
+                    <option value="pro">Pro ($39/mo)</option>
+                    <option value="l33t">L33t ($799/mo)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="row cols-2">
+                <div class="field">
+                  <label for="quote-vol">Month volume so far (USD)</label>
+                  <input id="quote-vol" type="number" min="0" step="1" value="0" />
+                  <span class="hint">Pro: $0 fee under $30k volume <em>or</em> 500 txs</span>
+                </div>
+                <div class="field">
+                  <label for="quote-txs">Month txs so far</label>
+                  <input id="quote-txs" type="number" min="0" step="1" value="0" />
+                </div>
+              </div>
+              <div class="quote-live" id="quote-live" aria-live="polite"></div>
+              <div class="actions">
+                <button class="btn btn--primary" type="submit">Run stub quote</button>
+              </div>
+              <pre class="result" id="quote-result" hidden></pre>
+            </form>
+          </div>
+
+          <div class="card">
+            <h2>Locked tiers</h2>
+            <p class="lede">Don’t invent numbers — these are the product lock.</p>
+            <ul class="tier-legend">
+              <li>
+                <strong>Free</strong>
+                <span class="muted small">1.0% + $0.25 per settlement</span>
+              </li>
+              <li>
+                <strong>Pro · $39/mo</strong>
+                <span class="muted small"
+                  >$0 platform fee under $30k volume or 500 txs; overage falls back to free formula</span
+                >
+              </li>
+              <li>
+                <strong>L33t · $799/mo</strong>
+                <span class="muted small">$0 platform fee · unlimited (fair-use)</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="settle" role="tabpanel" aria-label="Settle" hidden>
+        <div class="card">
+          <h2>Settle</h2>
+          <p class="lede">
+            Anything→anything only when there’s value, a path, and fees that clear.
+            Uncheck the toggles below to see a clean refuse.
+          </p>
+          <form class="form" id="form-settle">
+            <div class="row cols-2">
+              <div class="field">
+                <label for="from_wallet">From wallet</label>
+                <select
+                  id="from_wallet"
+                  name="from_wallet"
+                  data-wallet-select
+                  data-placeholder="Pick from wallet"
+                  required
+                >
+                  <option value="">Pick from wallet</option>
+                </select>
+                <span class="hint">Or create wallets on the Wallets tab first</span>
+              </div>
+              <div class="field">
+                <label for="to_wallet">To wallet</label>
+                <select
+                  id="to_wallet"
+                  name="to_wallet"
+                  data-wallet-select
+                  data-placeholder="Pick to wallet"
+                  required
+                >
+                  <option value="">Pick to wallet</option>
+                </select>
+              </div>
+            </div>
+            <div class="row cols-2">
+              <div class="field">
+                <label for="settle-amount">Amount (USD)</label>
+                <input
+                  id="settle-amount"
+                  name="amount"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value="25"
+                  required
+                />
+              </div>
+              <div class="field">
+                <label for="settle-tier">Tier</label>
+                <select id="settle-tier" name="tier">
+                  <option value="free">Free</option>
+                  <option value="pro">Pro</option>
+                  <option value="l33t">L33t</option>
+                </select>
+              </div>
+            </div>
+
+            <fieldset class="checks" aria-describedby="settle-rules">
+              <legend class="sr-only">Settle conditions</legend>
+              <p id="settle-rules" class="hint" style="margin: 0 0 0.35rem">
+                Stub conditions (demo switches):
+              </p>
+              <label>
+                <input type="checkbox" name="has_value" checked />
+                <span><strong>hasValue</strong> — there’s real value to move</span>
+              </label>
+              <label>
+                <input type="checkbox" name="path_exists" checked />
+                <span><strong>path</strong> — a settle path exists between from → to</span>
+              </label>
+            </fieldset>
+
+            <div class="actions">
+              <button class="btn btn--primary" type="submit">Settle (demo)</button>
+            </div>
+            <p class="status" id="settle-status" hidden></p>
+            <pre class="result" id="settle-result" hidden></pre>
+          </form>
+        </div>
+      </section>
+
+      <p class="footer-note">
+        AwLPay demo UI · fees from <code>docs/fee-manager-spec.md</code> · shapes from
+        <code>openapi.yaml</code> · not live money · not a Fly deploy
+      </p>
+    </main>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
