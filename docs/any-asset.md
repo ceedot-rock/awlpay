@@ -2,7 +2,9 @@
 
 A wallet sets `accepted_asset`. A payer sends any asset that has a live USD price. The receiver is credited that payment converted into the asset they keep. Fees are extra. They do not change what the receiver keeps unless the fees eat the payment, in which case the quote refuses.
 
-Prices are Coinbase spot (`BTC-USD`, `ETH-USD`, `SOL-USD`, `USDC-USD`), cached for 30 seconds. USD is one cent. If the feed fails, the quote refuses `price_unavailable`. It does not fall back to a made-up book.
+Prices are one consensus book. For each coin, AwLPay reads Coinbase, Kraken, CoinGecko, Bitstamp, and Gemini. With four or more prints it drops the high and the low, then takes the median. Bitcoin, Ether, and Solana need at least three prints. USDC needs two. If the kept prints differ by more than 1%, the quote refuses `price_disagreement`. If too few feeds answer, it refuses `price_unavailable`. It does not fall back to a made-up book. The book is cached for 30 seconds.
+
+Frankfurter's euro, pound, and yen rates ride along as fiat reference data. They are not averaged into the coin prices. USD is one cent.
 
 | Asset | Minor unit |
 |-------|------------|
