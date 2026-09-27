@@ -2,21 +2,49 @@ openapi: 3.0.3
 info:
   title: AwLPay Wallets API
   version: 1.0.0
+  description: |
+    Local/mock SettlementEngine first cut. No live chain rails.
+    POST /v1/wallets/{id}/credit is DEV-ONLY mock funding.
 paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
   /v1/wallets:
     post:
       summary: Create wallet
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [owner_id]
               properties:
-                owner_id: {type: string}
-                chain: {type: string, enum: [solana, base, ethereum]}
+                owner_id: { type: string }
+                chain: { type: string, enum: [solana, base, ethereum], default: solana }
       responses:
         '200':
           description: Wallet created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/wallets/{id}/balance:
     get:
       summary: Get balance
@@ -24,35 +52,171 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
-        '200': {description: OK}
-  /v1/quote:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/wallets/{id}/credit:
     post:
-      summary: Get fee quote
+      summary: DEV-ONLY mock credit (funding for local tests)
+      description: Mock-only. Not available in production. CoS gates public deploy.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [amount_cents]
               properties:
-                amount_cents: {type: integer}
-                tier: {type: string, enum: [free, pro, l33t]}
+                amount_cents: { type: integer, minimum: 1 }
       responses:
-        '200': {description: OK}
+        '200':
+          description: Credited
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  balance_cents: { type: integer }
+                  mock: { type: boolean }
+                  note: { type: string }
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/quote:
+    post:
+      summary: Get fee quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_cents]
+              properties:
+                amount_cents: { type: integer }
+                tier: { type: string, enum: [free, pro, l33t], default: free }
+                volume_month_usd_cents: { type: integer }
+                txs_month: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/settle:
     post:
-      summary: Settle payment
+      summary: Settle payment (mock in-memory)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
               required: [from_wallet, to_wallet, amount_cents]
               properties:
-                from_wallet: {type: string}
-                to_wallet: {type: string}
-                amount_cents: {type: integer}
-                tier: {type: string}
+                from_wallet: { type: string }
+                to_wallet: { type: string }
+                amount_cents: { type: integer }
+                tier: { type: string, enum: [free, pro, l33t], default: free }
+                volume_month_usd_cents: { type: integer }
+                txs_month: { type: integer }
       responses:
-        '200': {description: OK}
+        '200':
+          description: Settled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementReceipt'
+        '400':
+          description: Refused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    Wallet:
+      type: object
+      required: [id, owner_id, chain, balance_cents, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        owner_id: { type: string }
+        chain: { type: string, enum: [solana, base, ethereum] }
+        balance_cents: { type: integer }
+        created_at: { type: string, format: date-time }
+    Balance:
+      type: object
+      required: [id, balance_cents]
+      properties:
+        id: { type: string }
+        balance_cents: { type: integer }
+    Quote:
+      type: object
+      required: [amount_cents, platform_fee_cents, trading_fee_cents, total_debit_cents, tier_applied]
+      properties:
+        amount_cents: { type: integer }
+        platform_fee_cents: { type: integer }
+        trading_fee_cents: { type: integer }
+        total_debit_cents: { type: integer }
+        tier_applied: { type: string }
+    SettlementReceipt:
+      type: object
+      required:
+        - settlement_id
+        - from
+        - to
+        - amount_cents
+        - platform_fee_cents
+        - trading_fee_cents
+        - tier_applied
+        - status
+        - created_at
+      properties:
+        settlement_id: { type: string, format: uuid }
+        from: { type: string }
+        to: { type: string }
+        amount_cents: { type: integer }
+        platform_fee_cents: { type: integer }
+        trading_fee_cents: { type: integer }
+        tier_applied: { type: string }
+        status: { type: string, enum: [settled] }
+        created_at: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [error, reason]
+      properties:
+        error: { type: string }
+        reason: { type: string }
