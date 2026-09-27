@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { calculateFees, type Tier } from '@awlpay/sdk';
+import { calculateFees, quoteConversion, type Asset, type Tier } from '@awlpay/sdk';
 import type { WalletStore } from './store.js';
-import type { QuoteResult, SettleRefuse, SettleRequest, SettlementReceipt } from './types.js';
+import type {
+  ConvertSettleRequest,
+  QuoteResult,
+  SettleRefuse,
+  SettleRequest,
+  SettlementReceipt,
+} from './types.js';
 
 export class SettlementEngine {
   constructor(private store: WalletStore) {}
@@ -19,6 +25,16 @@ export class SettlementEngine {
       total_debit_cents: amount_cents + fees.platform_fee_cents + fees.trading_fee_cents,
       tier_applied: fees.tier_applied,
     };
+  }
+
+  quoteAny(
+    pay_asset: Asset,
+    pay_amount_minor: number,
+    accepted_asset: Asset,
+    tier: Tier = 'free',
+    ctx?: { volume_month_usd_cents?: number; txs_month?: number },
+  ) {
+    return quoteConversion(pay_asset, pay_amount_minor, accepted_asset, tier, ctx);
   }
 
   settle(req: SettleRequest): SettlementReceipt | SettleRefuse {
@@ -44,7 +60,7 @@ export class SettlementEngine {
     });
     const totalDebit = amount_cents + fees.platform_fee_cents + fees.trading_fee_cents;
 
-    if (from.balance_cents < totalDebit) {
+    if ((this.store.balanceOf(from_wallet, 'USD') ?? 0) < totalDebit) {
       return { error: 'refuse', reason: 'insufficient_funds' };
     }
 
@@ -60,6 +76,60 @@ export class SettlementEngine {
       tier_applied: fees.tier_applied,
       status: 'settled',
       created_at: new Date().toISOString(),
+      pay_asset: 'USD',
+      accepted_asset: 'USD',
+      path: 'identity',
+    };
+    this.store.appendReceipt(receipt);
+    return receipt;
+  }
+
+  /**
+   * Payer sends any attested asset. Receiver is credited in their accepted asset.
+   * Fee is extra, in the pay asset. No path or a fee that eats the value refuses.
+   */
+  settleAny(req: ConvertSettleRequest): SettlementReceipt | SettleRefuse {
+    const from = this.store.getWallet(req.from_wallet);
+    const to = this.store.getWallet(req.to_wallet);
+    if (!from || !to) return { error: 'refuse', reason: 'wallet_not_found' };
+    if (req.from_wallet === req.to_wallet) return { error: 'refuse', reason: 'same_wallet' };
+
+    const tier: Tier = req.tier ?? 'free';
+    const quoted = quoteConversion(req.pay_asset, req.pay_amount_minor, to.accepted_asset, tier, {
+      volume_month_usd_cents: req.volume_month_usd_cents,
+      txs_month: req.txs_month,
+    });
+    if ('error' in quoted) return quoted;
+
+    const have = this.store.balanceOf(req.from_wallet, req.pay_asset) ?? 0;
+    if (have < quoted.pay_debit_minor) {
+      return { error: 'refuse', reason: 'insufficient_funds' };
+    }
+
+    this.store.applyConvert(
+      req.from_wallet,
+      quoted.pay_asset,
+      quoted.pay_debit_minor,
+      req.to_wallet,
+      quoted.accepted_asset,
+      quoted.accepted_amount_minor,
+    );
+
+    const receipt: SettlementReceipt = {
+      settlement_id: randomUUID(),
+      from: req.from_wallet,
+      to: req.to_wallet,
+      amount_cents: quoted.usd_cents,
+      platform_fee_cents: quoted.platform_fee_cents,
+      trading_fee_cents: quoted.trading_fee_cents,
+      tier_applied: quoted.tier_applied,
+      status: 'settled',
+      created_at: new Date().toISOString(),
+      pay_asset: quoted.pay_asset,
+      pay_amount_minor: quoted.pay_amount_minor,
+      accepted_asset: quoted.accepted_asset,
+      accepted_amount_minor: quoted.accepted_amount_minor,
+      path: quoted.path,
     };
     this.store.appendReceipt(receipt);
     return receipt;

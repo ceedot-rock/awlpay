@@ -9,6 +9,7 @@ WIP wallets / settle surface for AwLPay. Built from a single CuNi FeeManager spe
 | `exact/` | **CuNi FeeManager SoT + Bank fixtures** (exactness or refuse) |
 | `docs/fee-manager-spec.md` | Locked Free / Pro / L33t fee math |
 | `docs/settlement-engine.md` | Mock SettlementEngine + refuse rules |
+| `docs/any-asset.md` | Accepted asset, USD bridge, mock rates |
 | `openapi.yaml` | REST API (OpenAPI 3.0.3) |
 | `server/` | Local SettlementEngine HTTP API (TypeScript) |
 | `sdk/` | npm `@awlpay/sdk` (TypeScript) — shared `calculateFees` mirror |
@@ -26,6 +27,12 @@ WIP wallets / settle surface for AwLPay. Built from a single CuNi FeeManager spe
 
 See `exact/FeeManager.cuni` for the CuNi law. `sdk/` / `mcp/` / `server/` mirror it — Bank PASS is truth.
 
+## Any asset, one asset kept
+
+The receiver sets `accepted_asset`. The payer can send USD, USDC, SOL, ETH, or BTC. The payment converts across a USD bridge into the asset the receiver keeps. If the asset has no price, no path, or the fee eats the payment, the settle refuses.
+
+Rates are an attested mock. They are not a live oracle. See `docs/any-asset.md`.
+
 ## Local server
 
 ```bash
@@ -35,7 +42,7 @@ npm test
 npm run dev    # http://127.0.0.1:8787
 ```
 
-Routes: `POST /v1/wallets`, `GET /v1/wallets/{id}/balance`, `POST /v1/wallets/{id}/credit` (DEV-ONLY mock), `POST /v1/quote`, `POST /v1/settle`, `GET /healthz`.
+Routes: `POST /v1/wallets`, `POST /v1/wallets/{id}/accepted`, `GET /v1/wallets/{id}/balance`, `POST /v1/wallets/{id}/credit` (DEV-ONLY mock), `POST /v1/quote`, `POST /v1/settle`, `GET /healthz`.
 
 Point the SDK / MCP at it with `AWLPAY_BASE_URL=http://127.0.0.1:8787`.
 
@@ -54,4 +61,4 @@ Fee math in the UI mirrors `sdk` `calculateFees` and `docs/fee-manager-spec.md`.
 
 ## Status
 
-**SoT is `exact/`.** First-cut SettlementEngine local (in-memory mock). SDK + MCP are mirrors of `exact/FeeManager.cuni`. **npm publish and Fly deploy: HOLD** until CoS green.
+**SoT is `exact/`.** Settlement can quote and settle an attested asset into the receiver's accepted asset. SDK fee math still mirrors `exact/FeeManager.cuni`. **npm publish and Fly deploy: HOLD** until CoS green.

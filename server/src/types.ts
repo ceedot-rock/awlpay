@@ -1,11 +1,17 @@
+import type { Asset } from '@awlpay/sdk';
+
 export type Chain = 'solana' | 'base' | 'ethereum';
 export type Tier = 'free' | 'pro' | 'l33t';
+export type { Asset };
 
 export interface Wallet {
   id: string;
   owner_id: string;
   chain: Chain;
+  accepted_asset: Asset;
+  /** USD minor units. Kept in lockstep with balances.USD. */
   balance_cents: number;
+  balances: Record<Asset, number>;
   created_at: string;
 }
 
@@ -19,6 +25,11 @@ export interface SettlementReceipt {
   tier_applied: string;
   status: 'settled';
   created_at: string;
+  pay_asset?: Asset;
+  pay_amount_minor?: number;
+  accepted_asset?: Asset;
+  accepted_amount_minor?: number;
+  path?: 'identity' | 'usd_bridge';
 }
 
 export interface QuoteResult {
@@ -33,6 +44,16 @@ export interface SettleRequest {
   from_wallet: string;
   to_wallet: string;
   amount_cents: number;
+  tier?: Tier;
+  volume_month_usd_cents?: number;
+  txs_month?: number;
+}
+
+export interface ConvertSettleRequest {
+  from_wallet: string;
+  to_wallet: string;
+  pay_asset: Asset;
+  pay_amount_minor: number;
   tier?: Tier;
   volume_month_usd_cents?: number;
   txs_month?: number;
