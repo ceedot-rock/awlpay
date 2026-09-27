@@ -1,7 +1,13 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
+import { bookFromWholeUnitCents } from '@awlpay/sdk';
 import { createApp } from '../src/app.js';
+
+const testBook = bookFromWholeUnitCents(
+  { USDC: 100, SOL: 15_000, ETH: 300_000, BTC: 6_000_000 },
+  'test',
+);
 
 async function json(
   base: string,
@@ -22,7 +28,7 @@ describe('any-asset settle into accepted asset', () => {
   let base: string;
 
   before(async () => {
-    const app = createApp();
+    const app = createApp(undefined, async () => testBook);
     server = app.server;
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => resolve());

@@ -29,9 +29,9 @@ See `exact/FeeManager.cuni` for the CuNi law. `sdk/` / `mcp/` / `server/` mirror
 
 ## Any asset, one asset kept
 
-The receiver sets `accepted_asset`. The payer can send USD, USDC, SOL, ETH, or BTC. The payment converts across a USD bridge into the asset the receiver keeps. If the asset has no price, no path, or the fee eats the payment, the settle refuses.
+The receiver sets `accepted_asset`. The payer can send USD, USDC, SOL, ETH, or BTC, or fund the same quote with a credit or debit rail. The payment converts across a USD bridge into the asset the receiver keeps. Spot prices come from Coinbase. Obscure routes and card rails add their own fee inside that quote. If the feed is down, the asset has no price, or the fees eat the payment, the settle refuses.
 
-Rates are an attested mock. They are not a live oracle. See `docs/any-asset.md`.
+See `docs/any-asset.md`.
 
 ## Local server
 
@@ -61,4 +61,4 @@ Fee math in the UI mirrors `sdk` `calculateFees` and `docs/fee-manager-spec.md`.
 
 ## Status
 
-**SoT is `exact/`.** Settlement can quote and settle an attested asset into the receiver's accepted asset. SDK fee math still mirrors `exact/FeeManager.cuni`. **npm publish and Fly deploy: HOLD** until CoS green.
+**SoT is `exact/`.** Quotes use live Coinbase spots. Route fees for obscure paths and cards sit in the same quote. SDK fee math still mirrors `exact/FeeManager.cuni`. **npm publish and Fly deploy: HOLD** until CoS green. Card quotes are priced, not captured.

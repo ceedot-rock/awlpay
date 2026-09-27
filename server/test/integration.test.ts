@@ -1,7 +1,13 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
+import { bookFromWholeUnitCents } from '@awlpay/sdk';
 import { createApp } from '../src/app.js';
+
+const testBook = bookFromWholeUnitCents(
+  { USDC: 100, SOL: 15_000, ETH: 300_000, BTC: 6_000_000 },
+  'test',
+);
 
 async function json(
   base: string,
@@ -22,7 +28,7 @@ describe('SettlementEngine HTTP integration', () => {
   let base: string;
 
   before(async () => {
-    const app = createApp();
+    const app = createApp(undefined, async () => testBook);
     server = app.server;
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => resolve());
@@ -79,7 +85,6 @@ describe('SettlementEngine HTTP integration', () => {
       tier: 'free',
     });
     assert.equal(quote.status, 200);
-    // 5000 * 10 // 1000 + 25 = 50 + 25 = 75
     assert.equal(quote.body.platform_fee_cents, 75);
     assert.equal(quote.body.trading_fee_cents, 0);
     assert.equal(quote.body.total_debit_cents, 5_075);
@@ -104,7 +109,6 @@ describe('SettlementEngine HTTP integration', () => {
     assert.equal(fromBal.body.balance_cents, 10_000 - 5_075);
     assert.equal(toBal.body.balance_cents, 5_000);
 
-    // remaining 4925; fee on 5000 is 75 → need 5075 → refuse
     const refuse = await json(base, 'POST', '/v1/settle', {
       from_wallet: fromId,
       to_wallet: toId,
@@ -115,7 +119,6 @@ describe('SettlementEngine HTTP integration', () => {
     assert.equal(refuse.body.error, 'refuse');
     assert.equal(refuse.body.reason, 'insufficient_funds');
 
-    // balances unchanged after refuse
     const fromBal2 = await json(base, 'GET', `/v1/wallets/${fromId}/balance`);
     assert.equal(fromBal2.body.balance_cents, 4_925);
   });

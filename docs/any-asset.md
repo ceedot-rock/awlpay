@@ -1,16 +1,29 @@
-# Any-asset settle (mock rates)
+# Any-asset settle
 
-A wallet sets `accepted_asset`. A payer sends any attested asset. The receiver is credited that payment converted into the asset they keep. The platform fee is an extra debit in the asset the payer sent.
+A wallet sets `accepted_asset`. A payer sends any asset that has a live USD price. The receiver is credited that payment converted into the asset they keep. Fees are extra. They do not change what the receiver keeps unless the fees eat the payment, in which case the quote refuses.
 
-Rates are an attested mock book, not a live oracle. USD is the bridge.
+Prices are Coinbase spot (`BTC-USD`, `ETH-USD`, `SOL-USD`, `USDC-USD`), cached for 30 seconds. USD is one cent. If the feed fails, the quote refuses `price_unavailable`. It does not fall back to a made-up book.
 
-| Asset | Minor unit | Mock price |
-|-------|------------|------------|
-| USD | cent | $0.01 |
-| USDC | cent | $0.01 |
-| SOL | 0.0001 SOL | $150.00 per SOL |
-| ETH | 0.0001 ETH | $3,000.00 per ETH |
-| BTC | 0.000001 BTC | $60,000.00 per BTC |
+| Asset | Minor unit |
+|-------|------------|
+| USD | cent |
+| USDC | cent |
+| SOL | 0.0001 SOL |
+| ETH | 0.0001 ETH |
+| BTC | 0.000001 BTC |
+
+## Route fees
+
+The platform tier fee stays the locked FeeManager formula. The route fee is separate and is inside the same quote.
+
+| Rail | Route fee |
+|------|-----------|
+| `spot` | 0 |
+| `obscure` | 1.50% + $0.50 |
+| `credit` | 2.90% + $0.30 |
+| `debit` | 1.50% + $0.22 |
+
+Credit and debit do not debit a coin balance. The quote returns `card_charge_cents`, which is the USD amount to authorize. This build prices that charge. It does not capture a real card.
 
 Refuse:
 

@@ -25,11 +25,14 @@ export interface SettlementReceipt {
   tier_applied: string;
   status: 'settled';
   created_at: string;
+  route_fee_cents?: number;
   pay_asset?: Asset;
   pay_amount_minor?: number;
   accepted_asset?: Asset;
   accepted_amount_minor?: number;
   path?: 'identity' | 'usd_bridge';
+  rail?: 'spot' | 'obscure' | 'credit' | 'debit';
+  card_charge_cents?: number;
 }
 
 export interface QuoteResult {
@@ -54,6 +57,7 @@ export interface ConvertSettleRequest {
   to_wallet: string;
   pay_asset: Asset;
   pay_amount_minor: number;
+  rail?: 'spot' | 'obscure' | 'credit' | 'debit';
   tier?: Tier;
   volume_month_usd_cents?: number;
   txs_month?: number;
