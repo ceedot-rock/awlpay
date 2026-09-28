@@ -1,0 +1,54 @@
+# awLPay FeeManager v1 — CuNi specification (locked product decisions 2026-09-27).
+#
+# CuNi limitations noted honestly:
+# - The Solidity seat refuses `typ` records by design (compile-or-refuse), so
+#   this spec cannot pass full 144-seat `cuni check`. It passes every seat
+#   that compiles `typ` (py/js/ts/c/cpp native verified 2026-09-27).
+# - On this VM the go/rs/rb/lua native runtimes are not installed, so those
+#   seats cannot run here regardless of program content.
+#
+# All money math is INTEGER CENTS. Integer division on CuNi floors for
+# non-negative operands and is identical on every target, so it is exact here:
+# every call path refuses negative amounts before any division happens.
+#
+# Fee application order (settlement law):
+#   1. fee is computed on the GROSS amount (this spec)
+#   2. net = gross - fee (see SettlementEngine.applyFees)
+#   3. refuse if net <= 0 (dust eaten by fees)
+#
+# Status contract: any status starting with "refused_" is a REFUSAL.
+# Callers MUST treat refused_* as "transaction must not proceed".
+
+typ FeeQuote do
+    fee_cents: int
+    status: str
+end
+
+# Tier ids: 0 = Free, 1 = Pro, 2 = L33t.
+def calculateFees(amount_cents: int, tier: int, volume_used_cents: int, txs_used: int) -> FeeQuote do
+    if amount_cents < 0 do
+        ret FeeQuote(0, "refused_negative_amount")
+    end
+    if tier == 0 do
+        # Free: 1.0% + $0.25 per tx, always.
+        ret FeeQuote(amount_cents / 100 + 25, "free")
+    end
+    if tier == 1 do
+        # Pro: $39/mo, cap $30k volume (3,000,000 cents) OR 500 txs/mo.
+        # Under cap: 0% platform fee. Overage falls back to Free pricing.
+        if volume_used_cents + amount_cents <= 3000000 and txs_used < 500 do
+            ret FeeQuote(0, "pro_under_cap")
+        end
+        ret FeeQuote(amount_cents / 100 + 25, "pro_overage")
+    end
+    if tier == 2 do
+        # L33t: $799/mo, unlimited. The fair-use guard is an honest flag,
+        # never a charge: fee stays 0 while the status asks for review.
+        if txs_used > 100000 do
+            ret FeeQuote(0, "l33t_fair_use_review")
+        end
+        ret FeeQuote(0, "l33t")
+    end
+    # Unknown tier: refuse rather than guess a price.
+    ret FeeQuote(0, "refused_unknown_tier")
+end

@@ -1,0 +1,146 @@
+[
+  {
+    "amount_cents": 10000,
+    "tier": 0,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 125,
+    "status": "free"
+  },
+  {
+    "amount_cents": 100,
+    "tier": 0,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 26,
+    "status": "free"
+  },
+  {
+    "amount_cents": 99,
+    "tier": 0,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 25,
+    "status": "free"
+  },
+  {
+    "amount_cents": 50,
+    "tier": 0,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 25,
+    "status": "free"
+  },
+  {
+    "amount_cents": 10000,
+    "tier": 1,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 0,
+    "status": "pro_under_cap"
+  },
+  {
+    "amount_cents": 1,
+    "tier": 1,
+    "volume_used_cents": 2999999,
+    "txs_used": 0,
+    "fee_cents": 0,
+    "status": "pro_under_cap"
+  },
+  {
+    "amount_cents": 1,
+    "tier": 1,
+    "volume_used_cents": 3000000,
+    "txs_used": 0,
+    "fee_cents": 25,
+    "status": "pro_overage"
+  },
+  {
+    "amount_cents": 10000,
+    "tier": 1,
+    "volume_used_cents": 0,
+    "txs_used": 499,
+    "fee_cents": 0,
+    "status": "pro_under_cap"
+  },
+  {
+    "amount_cents": 10000,
+    "tier": 1,
+    "volume_used_cents": 0,
+    "txs_used": 500,
+    "fee_cents": 125,
+    "status": "pro_overage"
+  },
+  {
+    "amount_cents": 10000,
+    "tier": 1,
+    "volume_used_cents": 2999999,
+    "txs_used": 499,
+    "fee_cents": 125,
+    "status": "pro_overage"
+  },
+  {
+    "amount_cents": 1000000,
+    "tier": 1,
+    "volume_used_cents": 3000000,
+    "txs_used": 10,
+    "fee_cents": 10025,
+    "status": "pro_overage"
+  },
+  {
+    "amount_cents": 10000,
+    "tier": 2,
+    "volume_used_cents": 999999999,
+    "txs_used": 99999,
+    "fee_cents": 0,
+    "status": "l33t"
+  },
+  {
+    "amount_cents": 10000,
+    "tier": 2,
+    "volume_used_cents": 0,
+    "txs_used": 100000,
+    "fee_cents": 0,
+    "status": "l33t"
+  },
+  {
+    "amount_cents": 10000,
+    "tier": 2,
+    "volume_used_cents": 0,
+    "txs_used": 100001,
+    "fee_cents": 0,
+    "status": "l33t_fair_use_review"
+  },
+  {
+    "amount_cents": 0,
+    "tier": 0,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 25,
+    "status": "free"
+  },
+  {
+    "amount_cents": 0,
+    "tier": 1,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 0,
+    "status": "pro_under_cap"
+  },
+  {
+    "amount_cents": -100,
+    "tier": 0,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 0,
+    "status": "refused_negative_amount"
+  },
+  {
+    "amount_cents": -1,
+    "tier": 1,
+    "volume_used_cents": 0,
+    "txs_used": 0,
+    "fee_cents": 0,
+    "status": "refused_negative_amount"
+  }
+]

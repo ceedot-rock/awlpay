@@ -1,0 +1,29 @@
+# awLPay Profile v1 — payer/payee identity plus their fee tier.
+#
+# CuNi limitations noted honestly: the Solidity seat refuses `typ` records by
+# design (compile-or-refuse); this spec passes every seat that compiles `typ`
+# (py/js/ts/c/cpp native verified 2026-09-27).
+#
+# Tier ids: 0 = Free, 1 = Pro, 2 = L33t (same ids as FeeManager).
+
+typ Profile do
+    party: str
+    chain: str
+    token: str
+    tier: int
+end
+
+# A profile is valid when chain and token are non-empty and tier is a
+# known tier id (0..2). Anything else is refused by the caller.
+def validProfile(p: Profile) -> bool do
+    if p.chain.len() == 0 do
+        ret false
+    end
+    if p.token.len() == 0 do
+        ret false
+    end
+    if p.tier < 0 or p.tier > 2 do
+        ret false
+    end
+    ret true
+end

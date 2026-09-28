@@ -1,0 +1,61 @@
+# awLPay SettlementEngine v1 — settlement law as pure functions.
+#
+# CuNi limitations noted honestly: the Solidity seat refuses `typ` records by
+# design (compile-or-refuse); this spec passes every seat that compiles `typ`
+# (py/js/ts/c/cpp native verified 2026-09-27).
+#
+# Fee application order (law, documented here):
+#   1. fee is computed on the GROSS amount (FeeManager.calculateFees)
+#   2. net = gross - fee (applyFees below)
+#   3. refuse if net <= 0 — dust eaten by fees is refused, never approximated
+#
+# The engine only trusts the hasValue oracle's bool answer; priced/unpriced
+# determination is the oracle's job, not this engine's.
+#
+# Status contract: any status starting with "refused_" is a REFUSAL.
+# Callers MUST treat refused_* as "transaction must not proceed".
+
+typ SettlementOutcome do
+    net_cents: int
+    status: str
+end
+
+typ Receipt do
+    receipt_id: str
+    from_chain: str
+    from_token: str
+    to_chain: str
+    to_token: str
+    amount_cents: int
+    fee_cents: int
+    net_cents: int
+    tier: int
+    status: str
+end
+
+# The oracle answers priced/unpriced; the engine only trusts the bool.
+def hasValue(priced: bool) -> bool do
+    ret priced
+end
+
+# Applies the fee to the gross amount. Refuses if fees eat the whole amount.
+def applyFees(amount_cents: int, fee_cents: int) -> SettlementOutcome do
+    if amount_cents < 0 or fee_cents < 0 do
+        ret SettlementOutcome(0, "refused_negative_input")
+    end
+    let net = amount_cents - fee_cents
+    if net <= 0 do
+        ret SettlementOutcome(0, "refused_dust_eaten_by_fees")
+    end
+    ret SettlementOutcome(net, "ok")
+end
+
+# Packages a verified settlement into a Receipt. Callers must pass the
+# verified net (from applyFees) — this function packages, it does not verify.
+# Refuses negative money fields rather than recording a false receipt.
+def buildReceipt(receipt_id: str, from_chain: str, from_token: str, to_chain: str, to_token: str, amount_cents: int, fee_cents: int, net_cents: int, tier: int, status: str) -> Receipt do
+    if amount_cents < 0 or fee_cents < 0 or net_cents < 0 do
+        ret Receipt(receipt_id, from_chain, from_token, to_chain, to_token, amount_cents, fee_cents, net_cents, tier, "refused_negative_input")
+    end
+    ret Receipt(receipt_id, from_chain, from_token, to_chain, to_token, amount_cents, fee_cents, net_cents, tier, status)
+end
