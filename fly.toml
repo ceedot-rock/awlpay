@@ -1,0 +1,41 @@
+# fly.toml — awLPay v1
+#
+# APP NAME PLACEHOLDER: `awlpay` is a stand-in. Corey owns naming —
+# set the real name with `fly launch --name <chosen>` (or edit here)
+# before the first deploy. Do NOT deploy until Corey confirms the plan
+# in DEPLOY.md.
+#
+# This file is deploy-READY but nothing has been launched: no `fly
+# launch`, no `fly deploy`, no resources created (standing rule).
+
+app = "awlpay"
+primary_region = "ewr"   # Newark — closest Fly region to the lab (Cherry Hill, NJ)
+
+[build]
+
+[env]
+  AWL_MODE = "prod"
+  AWL_ORACLE = "coingecko"   # non-secret; the key (AWL_RELAYER_KEY) goes via `fly secrets set`
+  AWL_TEST_MODE = "0"        # test-payment gate stays OFF in prod
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"    # scale to zero when idle; wakes on request
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+# Smallest shared preset. uvicorn + app idles ~60-90 MB; 256 MB is ample.
+# If p99 latency or memory pressure ever demands it, scale up with:
+#   fly scale memory 512   (or: fly machine update --vm-memory 512)
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

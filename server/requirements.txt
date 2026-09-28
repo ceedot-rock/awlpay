@@ -1,1 +1,11 @@
-pynacl
+# awLPay v1 server dependencies — fully pinned for deterministic builds.
+# Regenerate with: pip freeze | grep -iE '^(pynacl|starlette|uvicorn|anyio|click|h11|idna|sniffio|typing-extensions|exceptiongroup)'
+pynacl==1.6.2
+starlette==1.7.0
+uvicorn==0.54.0
+# --- transitive pins (pulled in by starlette/uvicorn) ---
+anyio==4.15.1
+click==8.5.0
+h11==0.16.0
+idna==3.20
+typing-extensions==4.16.0

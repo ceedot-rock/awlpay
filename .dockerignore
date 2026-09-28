@@ -1,0 +1,16 @@
+# Build context hygiene. (The Dockerfile only COPYs server/ + its
+# requirements; this file is belt-and-suspenders.)
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+tests/
+spec/
+.venv/
+venv/
+.env
+Dockerfile
+.dockerignore
+fly.toml
+*.md

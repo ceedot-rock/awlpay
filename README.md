@@ -203,8 +203,9 @@ Read this before believing anything about awLPay. Nothing here is softened.
 - **CoinGecko is a centralized trust assumption.** `hasValue()` is only as
   honest as the feed. The `PriceOracle` interface is swappable
   (`server/oracle.py`); the default offline oracle is a `MockOracle`.
-- **stdlib http.server.** Fine for local v1. A real deployment needs an ASGI
-  server behind a reverse proxy, real rate limiting, and persistent state.
+- **ASGI server, no rate limiting yet.** Starlette + uvicorn (replaced the
+  old stdlib `http.server` in workstream 4). Real rate limiting and
+  persistent state are still TODO before adversarial traffic.
 - **CuNi `cuni check` passes on 5 seats on this VM: py/js/ts/c/cpp.**
   Bare `cuni check` tries all 144 catalog seats: the go/rs/rb/lua runtimes are
   not installed on this machine (their runs fail), and Solidity refuses
@@ -268,7 +269,8 @@ awlpay/
     Profile.cuni           profile law (CuNi)
     fixtures/fees.json     18 machine-verified {inputs, fee_cents, status} fixtures
   server/
-    app.py                 stdlib HTTP server: /api/pay/quote, /api/pay/execute, /health
+    app.py                 Starlette ASGI app: /api/pay/quote, /api/pay/execute, /health, /healthz
+    logging.py             structured JSON request logs (stdout)
     fees.py                FeeManager mirror (integer cents)
     oracle.py              CoinGeckoOracle + MockOracle (PriceOracle interface)
     router.py              ConverterRouter BFS (bridge/swap hops)
@@ -276,6 +278,6 @@ awlpay/
     settlement.py          mock execution: fee law + signed receipt
     requirements.txt
   tests/
-    test_awlpay.py         17 core tests (do not modify)
+    test_awlpay.py         24 tests: fees/oracle/router/chamber/settlement + HTTP e2e on the ASGI app
     test_crosscheck.py     23 cross-check tests (fixtures, cuni check, receipt round-trip)
 ```
