@@ -9,7 +9,10 @@ import urllib.request
 
 import pytest
 
-sys.path.insert(0, os.path.expanduser("~/workspace/awlpay"))
+# Test the server code in THIS repo checkout (works in every worktree),
+# not a hardcoded path to another checkout.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 from server import fees, oracle, router, chamber, settlement  # noqa: E402
 from server.oracle import MockOracle  # noqa: E402

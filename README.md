@@ -187,12 +187,22 @@ tamper; never raises). A reused `idempotency_key` gets **409**
 
 Read this before believing anything about awLPay. Nothing here is softened.
 
-- **Settlement is MOCK. Coins never move.** `execute_quote()` runs the fee law
-  and signs a receipt attesting to the law that *would* execute — the
-  attestation is a receipt for a rule, not a movement of funds. `mode: "mock"`
-  is on every receipt.
-- **No mainnet.** `AWL_MAINNET_ENABLED=1` raises loudly; mainnet execution is
-  not implemented in v1 and no real funds may touch this code path.
+- **Settlement modes.** `AWL_EXECUTION_MODE` (default `"mock"`): mock mode
+  never moves coins — the receipt attests to the law that *would* execute
+  (`mode: "mock"` on every receipt). `"dryrun"` builds, signs (throwaway or
+  `AWL_SETTLER_KEY_<chain>` settler key), and *simulates* each transfer hop
+  (`eth_call` / `simulateTransaction`) against the configured **testnet** —
+  nothing broadcasts. `"broadcast"` additionally broadcasts, and only when
+  `AWL_BROADCAST=1` **and** every chain is testnet-only **and** an explicit
+  recipient is set — otherwise it raises instead of downgrading. Only
+  same-chain same-token transfer hops execute; swap/bridge hops refuse the
+  whole settlement atomically (`refused_unwired_hop`) — no DEX or bridge
+  protocol is wired yet, and Solana SPL/USDC transfers are an explicit stub.
+- **No mainnet.** `AWL_MAINNET_ENABLED=1` raises loudly, and
+  `server/chains.assert_testnet()` hard-refuses mainnet chain ids
+  (1, 8453, 137, 42161) and Solana mainnet-beta with **no env override** —
+  a mainnet flip is a code change plus explicit per-charge approval, never
+  a config flip. No real funds move, ever: testnets and throwaway keys only.
 - **The 402 gate is test-mode only.** `X-Test-Payment: ok` is a header, not a
   payment. No real payment rail is wired; outside test mode every unpaid
   request 402s.
@@ -273,9 +283,16 @@ awlpay/
     oracle.py              CoinGeckoOracle + MockOracle (PriceOracle interface)
     router.py              ConverterRouter BFS (bridge/swap hops)
     chamber.py             Ed25519 attestation envelopes
-    settlement.py          mock execution: fee law + signed receipt
-    requirements.txt
+    settlement.py          quote execution: fee law + signed receipt; modes
+                           mock (default) / dryrun / broadcast (gated)
+    chains.py              testnet-only network table, EVM (web3.py) + Solana
+                           (solders) adapters: build/sign/simulate/broadcast;
+                           mainnet chain ids hard-refused, no override
+    executor.py            consumes router paths hop-by-hop; transfer hops
+                           execute, swap/bridge hops refuse atomically
+    requirements.txt       pynacl, web3, solders
   tests/
-    test_awlpay.py         17 core tests (do not modify)
+    test_awlpay.py         17 core tests (import path fixed to this checkout)
     test_crosscheck.py     23 cross-check tests (fixtures, cuni check, receipt round-trip)
+    test_chains.py         21 real-settlement tests (adapters, executor, modes)
 ```

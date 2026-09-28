@@ -33,3 +33,102 @@ Built by coordinator + 3 workstreams. Local only. No commits, no deploys, no spe
 4. **Chamber custody**: where do relayer keys actually live in production?
 5. **l33t fair-use threshold**: 100,000 txs/mo is a placeholder — needs his number.
 6. **Anything leaving the lab**: nothing under his name has left the repo. Deployment (Fly or otherwise) was explicitly out of scope and not done.
+
+---
+
+# Workstream 1 — REAL SETTLEMENT (2026-09-28, branch `ws-settle`)
+
+Replaced the mocked SettlementEngine with real chain execution behind
+`AWL_EXECUTION_MODE`. Committed locally on `ws-settle`; never pushed.
+
+## Verified numbers
+- **pytest: 61 passed, 1 skipped, 0 failed**
+  (`cd ~/workspace/awlpay-wt-settle && python3 -m pytest tests/ -q`)
+  - 40 baseline tests still green (17 service + 18 fixtures + 1 count guard
+    + 3 `cuni check` gates + 1 receipt round-trip). One test-infra fix:
+    `tests/test_awlpay.py` hardcoded `sys.path` to `~/workspace/awlpay`
+    (the main worktree), so it was testing the wrong checkout's code —
+    now resolves the repo root from the test file's own path, the same
+    pattern `test_crosscheck.py` already used.
+  - 21 new tests in `tests/test_chains.py`; the 1 skip is the live Solana
+    devnet `simulateTransaction` test — `api.devnet.solana.com` is
+    unreachable from this VM (connection closed), so it skips honestly.
+- **CuNi specs untouched** (`exactness: PASS (5 langs)` still gates in
+  test_crosscheck.py): the fee law and `SettlementEngine.cuni` are
+  unchanged; the executor adds `refused_*`-contract statuses only
+  (`refused_unwired_hop`, `refused_no_recipient`, `refused_no_price`,
+  `refused_no_path`), never touching the integer-cents floor-division
+  agreement.
+- **Live dry-run proof (Base Sepolia, real node):** `eth_call` of a
+  0-value native transfer AND a 0-unit USDC `transfer()` against
+  `0x036CbD53842c5426634e7929541eC2318f3dCF7e` both execute cleanly;
+  the ERC-20 call returned boolean `true` (32-byte `0x...01`), proving
+  the configured address is a live token contract.
+- **Full-stack smoke (manual):** `AWL_EXECUTION_MODE=dryrun` server,
+  `/api/pay/execute` base/USDC→base/USDC $100 free tier → signed
+  receipt `mode: dryrun`, one transfer hop, 98,750,000 base units
+  ($98.75 — fee 125¢ applied exactly), real signed tx
+  (`1f71c958…`), `sim_ok: false` with the node's honest verdict
+  ("ERC20: transfer amount exceeds balance" — the throwaway sender
+  holds 0 USDC), `key_source: throwaway`, `throwaway_recipient: true`.
+- **Solana:** system-transfer instruction built + signed fully offline
+  (instruction decodes to program `1111…1111`, discriminator `02`,
+  5000 lamports LE; signature nacl-verifies against the message);
+  `simulateTransaction` request shape + ok/err parsing unit-tested.
+
+## What changed
+- `server/chains.py` (new): testnet-only `NETWORKS` table (Sepolia,
+  Base Sepolia, Polygon Amoy, Arbitrum Sepolia, Solana devnet;
+  Circle-issued USDC addresses web-verified across 4 sources);
+  `assert_testnet()` hard-refuses mainnet chain ids (1, 8453, 137,
+  42161) and non-devnet Solana clusters with no env override;
+  `EvmAdapter` (web3.py: native + ERC-20 USDC build/sign/eth_call/
+  broadcast) and `SolanaAdapter` (solders + stdlib JSON-RPC: native
+  SOL system transfers, build/sign/simulateTransaction/broadcast);
+  `get_settler_seed()` (`AWL_SETTLER_KEY_<chain>` or throwaway);
+  `broadcast_allowed()` (testnet AND `AWL_BROADCAST=1`).
+- `server/executor.py` (new): consumes `ConverterRouter` path output.
+  Transfer hops execute (build→sign→simulate in dryrun;
+  build→fill→sign→broadcast in broadcast). Swap/bridge hops have no
+  protocol wired → whole settlement refuses `refused_unwired_hop`
+  BEFORE executing anything (atomic — verified by test). Dust law:
+  net_cents → base units via exact `Fraction` floor math; 0 units →
+  `refused_dust_eaten_by_fees`. Broadcast without `AWL_BROADCAST=1`
+  RAISES (fail closed); broadcast without an explicit recipient
+  refuses `refused_no_recipient` (never sends to a throwaway).
+- `server/settlement.py`: `AWL_EXECUTION_MODE` mock (default, byte-
+  identical behavior to v1) / dryrun / broadcast; unknown mode raises.
+  Mainnet guard still first. Receipts gain `hops`, `to_address`,
+  `throwaway_recipient`, `key_source`; still Ed25519-signed.
+- `server/app.py`: optional `to_address` quote field (validated);
+  configured oracle passed into `execute_quote`.
+- `server/requirements.txt`: `pynacl`, `web3`, `solders`.
+
+## Deliberately stubbed (and why)
+- **Swap/bridge hops** (DEX swaps, CCTP-style bridges): no on-chain
+  liquidity/bridge protocol is wired; executing a fake would be
+  dishonest. They refuse atomically with `refused_unwired_hop`. The
+  executor's hop registry is the plug-in point (a swap/bridge executor
+  registers per hop kind).
+- **Solana SPL/USDC transfers**: needs ATA derivation + token-program
+  instructions; native SOL transfers are real. `can_transfer("USDC")`
+  returns `(False, "solana_spl_not_wired")` loudly.
+- **Broadcasts in tests**: no test ever broadcasts (no funds, no
+  accidents). The broadcast path is unit-tested via stub adapters plus
+  the real gate (`AWL_BROADCAST` + `assert_testnet`).
+- **CoinGecko oracle**: stays live per Corey's call; the
+  trust-minimized feed interface is untouched for later swap.
+- **Chamber HSM custody**: settler keys are env/throwaway (marked TODO
+  as before); nothing here authorizes real custody.
+
+## Mainnet-flip config surface (NOT enabled — documented only)
+- `AWL_EXECUTION_MODE`: `mock` (default) | `dryrun` | `broadcast`
+- `AWL_BROADCAST=1`: opens the broadcast gate (still testnet-only)
+- `AWL_SETTLER_KEY_<chain>`: 64-hex settler seed per chain
+  (ethereum, base, polygon, arbitrum, solana); unset → throwaway
+- `AWL_SETTLER_RECIPIENT`: default broadcast recipient
+- `AWL_RPC_<chain>`: override testnet RPC URL per chain
+- `AWL_USDC_<chain>` / `AWL_USDC_MINT_solana`: override USDC contract
+- `AWL_MAINNET_ENABLED=1`: loud refusal (unchanged)
+- A real mainnet flip = replace the `NETWORKS` table (code change) +
+  Corey's explicit per-charge approval. Nothing in this build flips it.
