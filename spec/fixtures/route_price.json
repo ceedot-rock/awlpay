@@ -1,0 +1,74 @@
+[
+  {
+    "compute_nc": 172,
+    "margin_den": 1,
+    "margin_num": 4,
+    "note": "locked production inputs: 172nc compute + 1,440,000nc RPC, x4 margin -> 0.00576c -> ceil 1c",
+    "oracle_nc": 0,
+    "price_cents": 1,
+    "rpc_nc": 1440000
+  },
+  {
+    "compute_nc": 0,
+    "margin_den": 1,
+    "margin_num": 4,
+    "note": "zero cost -> 0c computed, 1c minimum floor binds",
+    "oracle_nc": 0,
+    "price_cents": 1,
+    "rpc_nc": 0
+  },
+  {
+    "compute_nc": 2500000000,
+    "margin_den": 1,
+    "margin_num": 4,
+    "note": "2.5c unit x4 margin -> 10c",
+    "oracle_nc": 0,
+    "price_cents": 10,
+    "rpc_nc": 0
+  },
+  {
+    "compute_nc": 2000000000,
+    "margin_den": 2,
+    "margin_num": 3,
+    "note": "fractional margin 3/2 on 2c unit -> 3c",
+    "oracle_nc": 0,
+    "price_cents": 3,
+    "rpc_nc": 0
+  },
+  {
+    "compute_nc": 1000000001,
+    "margin_den": 1,
+    "margin_num": 1,
+    "note": "ceil: 1,000,000,001nc (just over 1c) x1 -> 2c",
+    "oracle_nc": 0,
+    "price_cents": 2,
+    "rpc_nc": 0
+  },
+  {
+    "compute_nc": 1000000000,
+    "margin_den": 1,
+    "margin_num": 1,
+    "note": "exact boundary: 1,000,000,000nc = exactly 1c x1 -> 1c",
+    "oracle_nc": 0,
+    "price_cents": 1,
+    "rpc_nc": 0
+  },
+  {
+    "compute_nc": 999999999,
+    "margin_den": 1,
+    "margin_num": 1,
+    "note": "just under 1c x1 -> ceil 1c (floor would bind anyway)",
+    "oracle_nc": 0,
+    "price_cents": 1,
+    "rpc_nc": 0
+  },
+  {
+    "compute_nc": 100000000000,
+    "margin_den": 1,
+    "margin_num": 4,
+    "note": "large: 100c unit x4 -> 400c",
+    "oracle_nc": 0,
+    "price_cents": 400,
+    "rpc_nc": 0
+  }
+]

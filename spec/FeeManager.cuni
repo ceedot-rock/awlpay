@@ -44,11 +44,30 @@ def calculateFees(amount_cents: int, tier: int, volume_used_cents: int, txs_used
     if tier == 2 do
         # L33t: $799/mo, unlimited. The fair-use guard is an honest flag,
         # never a charge: fee stays 0 while the status asks for review.
-        if txs_used > 100000 do
+        # 127669 is econ-derived (2026-09-28): the tx count where modeled
+        # variable cost/tx consumes 35% of the $799 sub (65% margin).
+        # Derivation in PRICING.md; was a 100k placeholder.
+        if txs_used > 127669 do
             ret FeeQuote(0, "l33t_fair_use_review")
         end
         ret FeeQuote(0, "l33t")
     end
     # Unknown tier: refuse rather than guess a price.
     ret FeeQuote(0, "refused_unknown_tier")
+end
+
+# Route price: the cost-plus 402 toll for POST /api/pay/execute, in integer
+# cents. Inputs are integer NANOCENTS (1c = 1000000000 nc); the margin is a
+# num/den pair. price = max(1, ceil((compute+rpc+oracle) * num/den)).
+# Integer division floors on non-negative operands on every seat, so the
+# (a + b - 1) / b idiom below is an exact ceil — identical in Python.
+# Contract: all inputs non-negative ints, margin_den positive.
+def routePrice(compute_nc: int, rpc_nc: int, oracle_nc: int, margin_num: int, margin_den: int) -> int do
+    let unit_nc = compute_nc + rpc_nc + oracle_nc
+    let priced_nc = (unit_nc * margin_num + margin_den - 1) / margin_den
+    let cents = (priced_nc + 999999999) / 1000000000
+    if cents < 1 do
+        ret 1
+    end
+    ret cents
 end

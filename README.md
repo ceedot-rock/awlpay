@@ -54,7 +54,7 @@ no floats, no rounding ambiguity.
 |------|------|-------|------|
 | 0 | Free | pay-per-tx | **1.0% + $0.25/tx**: `fee = amount_cents // 100 + 25` |
 | 1 | Pro | **$39/mo** | Cap **$30k volume OR 500 txs/mo**. Under cap: `fee = 0` (`pro_under_cap`). Over either cap: falls back to free pricing (`pro_overage`). Boundary: under iff `volume_used + amount <= 3_000_000` **and** `txs_used < 500`. |
-| 2 | L33t | **$799/mo** | Unlimited, `fee = 0` (`l33t`). Fair-use compute guard at 100k txs/mo: `txs_used > 100_000` → `l33t_fair_use_review` (fee still 0, flagged for review). |
+| 2 | L33t | **$799/mo** | Unlimited, `fee = 0` (`l33t`). Fair-use compute guard at **127,669 txs/mo** (econ-derived 2026-09-28 — the tx count where modeled variable cost/tx consumes 35% of the $799 sub at a 65% margin; see `PRICING.md`): `txs_used > 127_669` → `l33t_fair_use_review` (fee still 0, flagged for review). |
 
 Status strings returned by `calculate_fees`: `free`, `pro_under_cap`, `pro_overage`,
 `l33t`, `l33t_fair_use_review`, `refused_negative_amount`. (CuNi additionally has
@@ -121,22 +121,24 @@ Refusal reasons (200, `{"refused": true, ...}`):
 
 ### POST /api/pay/execute — 402-gated
 
-Route price: **25¢ flat** per execution (v1). Unpaid requests get **HTTP 402**
-with an x402-style `paymentRequirements` body and a `PAYMENT-REQUIRED: 1`
-header; pay (test mode), then retry.
+Route price: **1¢, cost-plus** per execution (derived 2026-09-28 from
+measured compute + Base RPC for x402 verification, ×4 margin, 1¢ floor —
+full breakdown in `PRICING.md`; replaces the 25¢ v1 flat placeholder).
+Unpaid requests get **HTTP 402** with an x402-style `paymentRequirements`
+body and a `PAYMENT-REQUIRED: 1` header; pay (test mode), then retry.
 
 Unpaid (402) — response body is the x402 envelope:
 ```json
 {
   "x402Version": 1,
-  "error": "payment required: pay 25 cents, then retry with X-Test-Payment: ok (test mode only)",
+  "error": "payment required: pay 1 cents, then retry with X-Test-Payment: ok (test mode only)",
   "accepts": [{
     "scheme": "exact", "network": "eip155:8453",
-    "maxAmountRequired": "25", "price_cents": 25,
+    "maxAmountRequired": "1", "price_cents": 1,
     "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "payTo": "0x0000000000000000000000000000000000000000",
     "resource": "https://127.0.0.1:8899/api/pay/execute",
-    "description": "awLPay v1 /api/pay/execute — 25 cents flat per execution (route price)",
+    "description": "awLPay v1 /api/pay/execute — 1 cent cost-plus route toll per execution",
     "mimeType": "application/json", "maxTimeoutSeconds": 300
   }]
 }
