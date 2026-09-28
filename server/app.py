@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """awLPay v1 — payment service (Starlette ASGI + uvicorn).
 
+Settlement modes via AWL_EXECUTION_MODE: "mock" (default, local only —
+coins never move), "dryrun" (real tx build+sign+simulate on testnets),
+"broadcast" (gated real broadcast on testnets). Mainnet stays
+hard-disabled (AWL_MAINNET_ENABLED=1 -> loud refusal; mainnet chain ids
+are refused in code with no override).
+
 Endpoints:
     POST /api/pay/quote    FREE.  Validate a conversion: hasValue checks
                            on both tokens, router.find_path, and fee math
@@ -62,6 +68,20 @@ Env:
     AWL_RELAYER_KEY     64-hex-char Ed25519 seed (see chamber.py custody note)
     AWL_MAINNET_ENABLED "1" -> settlement refuses loudly (v1 has no mainnet)
     AWL_MODE            reported in /health and logs (default "mock-local")
+    AWL_EXECUTION_MODE  settlement mode: "mock" (default), "dryrun"
+                        (build+sign+simulate on testnets, no broadcast),
+                        "broadcast" (dryrun + real broadcast, gated)
+    AWL_BROADCAST       "1" opens the broadcast gate (testnets only;
+                        without it broadcast mode RAISES)
+    AWL_SETTLER_KEY_<chain>
+                        64-hex settler seed per chain (ethereum, base,
+                        polygon, arbitrum, solana); unset -> throwaway
+    AWL_SETTLER_RECIPIENT
+                        default recipient for broadcast mode
+    AWL_RPC_<chain>     override the testnet RPC URL per chain
+    AWL_USDC_<chain>    override the testnet USDC contract (EVM)
+    AWL_USDC_MINT_solana
+                        override the devnet USDC mint
 """
 
 from __future__ import annotations
@@ -210,6 +230,12 @@ def parse_quote_body(raw: bytes) -> tuple[dict | None, dict | None]:
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
             return None, _bad(body, f, "must be a non-negative integer")
 
+    to_address = body.get("to_address")
+    if to_address is not None and (
+            not isinstance(to_address, str) or not to_address.strip()):
+        return None, _bad(body, "to_address",
+                           "must be a non-empty string when present")
+
     return ({
         "from_chain": body["from_chain"].strip().lower(),
         "from_token": body["from_token"].strip().upper(),
@@ -220,6 +246,7 @@ def parse_quote_body(raw: bytes) -> tuple[dict | None, dict | None]:
         "volume_used_cents": volume_used,
         "txs_used": txs_used,
         "idempotency_key": body.get("idempotency_key"),
+        "to_address": to_address.strip() if to_address else None,
     }, None)
 
 
@@ -444,8 +471,9 @@ async def execute(request):
                 quote,
                 {"volume_used_cents": q["volume_used_cents"],
                  "txs_used": q["txs_used"]},
-                signing_key=get_signing_key())
-        except RuntimeError as e:  # mainnet guard
+                signing_key=get_signing_key(),
+                oracle=get_oracle())
+        except RuntimeError as e:  # mainnet guard / broadcast gate
             return 503, {"error": str(e)}, None
         body = {
             "ok": True,

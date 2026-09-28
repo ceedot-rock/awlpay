@@ -9,6 +9,7 @@ import urllib.request
 
 # Repo root derived from THIS file (not a hardcoded sibling checkout):
 # test_awlpay.py must import the server/ under test, not another copy.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 

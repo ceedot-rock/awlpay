@@ -1,5 +1,5 @@
 # awLPay v1 server dependencies — fully pinned for deterministic builds.
-# Regenerate with: pip freeze | grep -iE '^(pynacl|starlette|uvicorn|anyio|click|h11|idna|sniffio|typing-extensions|exceptiongroup)'
+# Regenerate with: pip freeze | grep -iE '^(pynacl|starlette|uvicorn|anyio|click|h11|idna|sniffio|typing-extensions|exceptiongroup|web3|solders)'
 pynacl==1.6.2
 starlette==1.7.0
 uvicorn==0.54.0
@@ -9,3 +9,9 @@ click==8.5.0
 h11==0.16.0
 idna==3.20
 typing-extensions==4.16.0
+# --- optional: ONLY needed for AWL_EXECUTION_MODE=dryrun/broadcast ---
+# server/chains.py imports these lazily; mock mode and the test suite run
+# without them. Unpinned deliberately: any recent web3.py / solders works
+# against the testnet JSON-RPC surface used here.
+web3
+solders

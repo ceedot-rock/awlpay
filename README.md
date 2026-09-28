@@ -184,10 +184,10 @@ Paid (real X-PAYMENT), same body as `/quote`, 200:
 ```json
 {
   "ok": true,
-  "charged_cents": 25,
-  "route_price_cents": 25,
+  "charged_cents": 1,
+  "route_price_cents": 1,
   "payment": {"via": "x402", "network": "eip155:8453", "tx": "0x…",
-              "payer": "0x…", "paid_units": 250000},
+              "payer": "0x…", "paid_units": 10000},
   "attestation": {
     "alg": "ed25519",
     "kid": "b521ad84a17fe68f",
@@ -255,12 +255,22 @@ startup warning in that mode). The old `AWL_TEST_MODE` is retired and inert.
 
 Read this before believing anything about awLPay. Nothing here is softened.
 
-- **Settlement is MOCK. Coins never move.** `execute_quote()` runs the fee law
-  and signs a receipt attesting to the law that *would* execute — the
-  attestation is a receipt for a rule, not a movement of funds. `mode: "mock"`
-  is on every receipt. What IS real: the 25¢ x402 payment verification
-  (read-only chain reads: receipt, USDC Transfer logs, EIP-191 payer binding),
-  the replay protection, and the Ed25519 receipt signatures.
+- **Settlement modes.** `AWL_EXECUTION_MODE` (default `"mock"`): mock mode
+  never moves coins — the receipt attests to the law that *would* execute
+  (`mode: "mock"` on every receipt). `"dryrun"` builds, signs (throwaway or
+  `AWL_SETTLER_KEY_<chain>` settler key), and *simulates* each transfer hop
+  (`eth_call` / `simulateTransaction`) against the configured **testnet** —
+  nothing broadcasts. `"broadcast"` additionally broadcasts, and only when
+  `AWL_BROADCAST=1` **and** every chain is testnet-only **and** an explicit
+  recipient is set — otherwise it raises instead of downgrading. Only
+  same-chain same-token transfer hops execute; swap/bridge hops refuse the
+  whole settlement atomically (`refused_unwired_hop`) — no DEX or bridge
+  protocol is wired yet, and Solana SPL/USDC transfers are an explicit stub.
+- **No mainnet.** `AWL_MAINNET_ENABLED=1` raises loudly, and
+  `server/chains.assert_testnet()` hard-refuses mainnet chain ids
+  (1, 8453, 137, 42161) and Solana mainnet-beta with **no env override** —
+  a mainnet flip is a code change plus explicit per-charge approval, never
+  a config flip. No real funds move, ever: testnets and throwaway keys only.
 - **Testnet posture.** Base Sepolia verifies out of the box via a public RPC
   fallback; Base mainnet deliberately has **no** fallback — the operator must
   set `AWL_RPC_BASE` (and `AWL_PAY_TO`) to take real Base payments. No
@@ -378,10 +388,17 @@ awlpay/
     oracle.py              CoinGeckoOracle + MockOracle (PriceOracle interface)
     router.py              ConverterRouter BFS (bridge/swap hops)
     chamber.py             Ed25519 attestation envelopes
-    settlement.py          mock execution: fee law + signed receipt
-    requirements.txt
+    settlement.py          quote execution: fee law + signed receipt; modes
+                           mock (default) / dryrun / broadcast (gated)
+    chains.py              testnet-only network table, EVM (web3.py) + Solana
+                           (solders) adapters: build/sign/simulate/broadcast;
+                           mainnet chain ids hard-refused, no override
+    executor.py            consumes router paths hop-by-hop; transfer hops
+                           execute, swap/bridge hops refuse atomically
+    requirements.txt       pynacl, web3, solders
   tests/
     test_awlpay.py         24 tests: fees/oracle/router/chamber/settlement + HTTP e2e on the ASGI app
     test_crosscheck.py     23 cross-check tests (fixtures, cuni check, receipt round-trip)
     test_x402.py           17 real-402 payment tests (1c-wired ASGI port: mock chain, replay/binding/underpaid 402s, live read-only testnet check)
+    test_chains.py         22 real-settlement tests (adapters, executor, modes)
 ```
