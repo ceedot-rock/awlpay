@@ -9,7 +9,7 @@ import urllib.request
 
 import pytest
 
-sys.path.insert(0, os.path.expanduser("~/workspace/awlpay"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server import fees, oracle, router, chamber, settlement  # noqa: E402
 from server.oracle import MockOracle  # noqa: E402
@@ -186,13 +186,23 @@ def _post(port, path, body, headers=None):
 
 @pytest.fixture(scope="module")
 def server():
+    """Run the Starlette ASGI app under uvicorn in a background thread.
+
+    Same black-box posture as the old stdlib-server fixture: real HTTP
+    over 127.0.0.1, urllib client, module scope so the idempotency-nonce
+    and oracle caches behave exactly like production (one process).
+    """
     os.environ["AWL_TEST_MODE"] = "1"
-    os.environ["AWL_PORT"] = "8899"
+    import uvicorn
     from server import app as appmod
-    t = threading.Thread(target=appmod.run, daemon=True)
+    config = uvicorn.Config(appmod.app, host="127.0.0.1", port=8899,
+                            log_level="critical", access_log=False,
+                            lifespan="off")
+    srv = uvicorn.Server(config)
+    t = threading.Thread(target=srv.run, daemon=True)
     t.start()
     import time
-    for _ in range(50):
+    for _ in range(100):
         try:
             with urllib.request.urlopen("http://127.0.0.1:8899/health", timeout=2) as r:
                 assert r.status == 200
@@ -200,6 +210,8 @@ def server():
         except Exception:
             time.sleep(0.1)
     yield 8899
+    srv.should_exit = True
+    t.join(timeout=15)
 
 
 def test_http_health(server):
@@ -263,3 +275,95 @@ def test_http_execute_402_then_test_payment(server):
     code, b409, _ = _post(server, "/api/pay/execute", body,
                           {"X-Test-Payment": "ok"})
     assert code == 409
+
+
+# ---------------------------------------------------------------- hardening
+def test_http_healthz(server):
+    """Fly http_service check target: 200 + version."""
+    with urllib.request.urlopen("http://127.0.0.1:%d/healthz" % server) as r:
+        body = json.load(r)
+    assert r.status == 200
+    assert body["ok"] is True
+    assert body["version"] == "1.0"
+    assert body["mode"] == "mock-local"
+
+
+def _get(port, path, headers=None):
+    req = urllib.request.Request(
+        "http://127.0.0.1:%d%s" % (port, path),
+        headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.read(), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers)
+
+
+def test_http_quote_trailing_slash_parity(server):
+    """POST /api/pay/quote/ behaves exactly like /api/pay/quote
+    (stdlib server stripped trailing slashes)."""
+    body = {"from_chain": "ethereum", "from_token": "ETH",
+            "to_chain": "base", "to_token": "USDC",
+            "amount_cents": 10_000, "tier": 1}
+    code1, b1, _ = _post(server, "/api/pay/quote", body)
+    code2, b2, _ = _post(server, "/api/pay/quote/", body)
+    assert code1 == code2 == 200
+    assert b1 == b2 and not b1.get("refused")
+
+
+def test_http_method_mismatch_is_json_404(server):
+    """Method+path parity with the stdlib server: wrong method on a
+    known route is a JSON 404, not a 405."""
+    code, raw, _ = _get(server, "/api/pay/quote")
+    assert code == 404 and json.loads(raw) == {"error": "not found"}
+    code, raw, _ = _get(server, "/nope")
+    assert code == 404 and json.loads(raw) == {"error": "not found"}
+    # POST on a GET-only route likewise 404s (old do_POST fell through)
+    code, b, _ = _post(server, "/health", {})
+    assert code == 404 and b == {"error": "not found"}
+
+
+def test_http_body_too_large_413(server):
+    big = {"from_chain": "ethereum", "from_token": "ETH",
+           "to_chain": "base", "to_token": "USDC",
+           "amount_cents": 100, "pad": "x" * (70 * 1024)}
+    code, b, _ = _post(server, "/api/pay/quote", big)
+    assert code == 413 and b == {"error": "body too large"}
+
+
+def test_http_execute_refused_quote_parity(server):
+    """Paid execute of a dust quote returns the 200 refusal shape —
+    same law as /quote, through the 402 gate."""
+    body = {"from_chain": "ethereum", "from_token": "USDC",
+            "to_chain": "ethereum", "to_token": "USDC",
+            "amount_cents": 20, "tier": 0,
+            "idempotency_key": "test-nonce-dust-1"}
+    code, b, _ = _post(server, "/api/pay/execute", body,
+                       {"X-Test-Payment": "ok"})
+    assert code == 200
+    assert b["refused"] is True and b["reason"] == "dust_eaten_by_fees"
+
+
+def test_http_request_id_echo(server):
+    """Every response carries X-Request-Id; a caller-supplied id is
+    passed through untouched."""
+    _, _, h1 = _get(server, "/health")
+    rid1 = {k.lower(): v for k, v in h1.items()}.get("x-request-id")
+    assert rid1, "X-Request-Id missing on response"
+    _, _, h2 = _get(server, "/health", {"X-Request-Id": "probe-123"})
+    rid2 = {k.lower(): v for k, v in h2.items()}.get("x-request-id")
+    assert rid2 == "probe-123"
+
+
+def test_log_event_json_shape(capsys):
+    """log_event emits exactly one JSON line with the required fields."""
+    from server import logging as logmod
+    logmod.log_event("request", request_id="r1", method="POST",
+                     path="/api/pay/quote", status=200, latency_ms=1.5,
+                     tier="pro", price_cents=0, mode="mock-local")
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1
+    rec = json.loads(out[0])
+    assert rec["event"] == "request" and rec["request_id"] == "r1"
+    assert rec["tier"] == "pro" and rec["price_cents"] == 0
+    assert rec["latency_ms"] == 1.5 and "ts" in rec
