@@ -13,7 +13,7 @@ Built by coordinator + 3 workstreams. Local only. No commits, no deploys, no spe
 
 ## What works
 - `POST /api/pay/quote` (free): hasValue() gate on both tokens → BFS conversion path across 5 chains (ethereum, base, polygon, arbitrum, solana; USDC/ETH/SOL) → fees quoted for all three tiers → or honest 200 `{refused: true, reason}` (`unknown_token_no_price`, `no_conversion_path`, `dust_eaten_by_fees`).
-- `POST /api/pay/execute` (402-gated, 25¢ route price): tier caps enforced (pro: volume+amount ≤ 3,000,000¢ AND txs < 500 → 0 fee; overage → free pricing), dust refused (net ≤ 0), receipt signed with real Ed25519.
+- `POST /api/pay/execute` (402-gated, **1¢ cost-plus route toll** — derived 2026-09-28 from measured compute + Base RPC, ×4 margin, 1¢ floor; see `PRICING.md`): tier caps enforced (pro: volume+amount ≤ 3,000,000¢ AND txs < 500 → 0 fee; overage → free pricing), dust refused (net ≤ 0), receipt signed with real Ed25519.
 - FeeManager CuNi spec + Python mirror agree exactly (integer cents, floor division on non-negatives).
 - Price oracle: pluggable ABC; CoinGecko live-verified working (ETH $2,697.84 at build time); MockOracle for tests.
 
@@ -29,7 +29,7 @@ Built by coordinator + 3 workstreams. Local only. No commits, no deploys, no spe
 ## Needs Corey's decision
 1. **Oracle choice**: ship with CoinGecko (free, centralized) or invest in a trust-minimized price feed before any real use?
 2. **Mainnet enablement**: stays hard-disabled until he explicitly approves; real settlement + real 402 payment verification (port from rider-x402) are the two big builds before that.
-3. **Paid-route pricing**: /execute route price is 25¢ flat in v1 — does he want per-call pricing tied to actual compute/cost-plus?
+3. **Paid-route pricing**: RESOLVED 2026-09-28 (workstream 3) — /execute route price is now **1¢ cost-plus** (measured compute + Base RPC for x402 verification, ×4 margin, 1¢ floor; full breakdown in `PRICING.md`), replacing the 25¢ flat placeholder.
 4. **Chamber custody**: where do relayer keys actually live in production?
-5. **l33t fair-use threshold**: 100,000 txs/mo is a placeholder — needs his number.
+5. **l33t fair-use threshold**: RESOLVED 2026-09-28 (workstream 3) — **127,669 txs/mo**, econ-derived: the tx count where modeled variable cost/tx ($0.002190 — Fly compute + cached CoinGecko + $0.002/tx support assumption) consumes 35% of the $799 sub (65% margin). Full math + sensitivity table in `PRICING.md`. The support assumption ($8/ticket @ 1/4,000 txs) is the load-bearing one — flagged for Corey's review.
 6. **Anything leaving the lab**: nothing under his name has left the repo. Deployment (Fly or otherwise) was explicitly out of scope and not done.

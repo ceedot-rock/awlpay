@@ -6,13 +6,15 @@ Endpoints:
                            on both tokens, router.find_path, and fee math
                            for all three tiers. 200 with {path, fees, ...}
                            or 200 with {refused: true, reason}.
-    POST /api/pay/execute   402-GATED. Route price: 25 cents flat (v1).
-                           Unpaid/bad payment -> 402 + payment
-                           requirements. In AWL_TEST_MODE=1, header
-                           X-Test-Payment: ok counts as paid (loud log
-                           line — NO real payment is verified). Otherwise
-                           this endpoint has no real rail wired and every
-                           unpaid request 402s.
+    POST /api/pay/execute   402-GATED. Route price: 1 cent, cost-plus
+                           (integer nanocents: measured compute + Base RPC
+                           for x402 verification, x4 margin, 1c floor —
+                           see server/fees.py and PRICING.md). Unpaid/bad
+                           payment -> 402 + payment requirements. In
+                           AWL_TEST_MODE=1, header X-Test-Payment: ok counts
+                           as paid (loud log line — NO real payment is
+                           verified). Otherwise this endpoint has no real
+                           rail wired and every unpaid request 402s.
     GET  /health            200 {ok: true, mode}.
 
 Refusals are HTTP 200 with {"refused": true, "reason"} — honest,
@@ -40,14 +42,16 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .chamber import load_relayer_keys
-from .fees import calculate_fees, FREE, PRO, L33T
+from .fees import calculate_fees, FREE, PRO, L33T, ROUTE_PRICE_CENTS
 from .oracle import PriceOracle, CoinGeckoOracle, default_mock_oracle
 from .router import ConverterRouter
 from .settlement import execute_quote
 
 PORT = int(os.environ.get("AWL_PORT", "8899"))
 MODE = os.environ.get("AWL_MODE", "mock-local")
-EXECUTE_PRICE_CENTS = 25  # flat v1 route price for /api/pay/execute
+# Cost-plus route toll, derived in server/fees.py (== 1). NOT a flat pick:
+# re-derive by re-running the benchmark and updating the fee constants.
+EXECUTE_PRICE_CENTS = ROUTE_PRICE_CENTS
 
 # x402-style envelope shape (mirrors rider-x402's unpaid -> 402 shape).
 X402_VERSION = 1
@@ -96,8 +100,8 @@ def payment_requirements(host: str) -> dict:
             "asset": PAY_ASSET,
             "payTo": PAY_TO,
             "resource": "https://%s/api/pay/execute" % host,
-            "description": ("awLPay v1 /api/pay/execute — %d cents flat per "
-                            "execution (route price)" % EXECUTE_PRICE_CENTS),
+            "description": ("awLPay v1 /api/pay/execute — %d cent cost-plus "
+                            "route toll per execution" % EXECUTE_PRICE_CENTS),
             "mimeType": "application/json",
             "maxTimeoutSeconds": 300,
         }],

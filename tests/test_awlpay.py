@@ -9,7 +9,9 @@ import urllib.request
 
 import pytest
 
-sys.path.insert(0, os.path.expanduser("~/workspace/awlpay"))
+# Repo root derived from THIS file (not a hardcoded sibling checkout):
+# test_awlpay.py must import the server/ under test, not another copy.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server import fees, oracle, router, chamber, settlement  # noqa: E402
 from server.oracle import MockOracle  # noqa: E402
@@ -31,8 +33,12 @@ def test_fee_exactness_core_cases():
     assert fees.calculate_fees(10_000, 1, 2_999_999, 0) == (125, "pro_overage")
     assert fees.calculate_fees(10_000, 1, 0, 500) == (125, "pro_overage")
     assert fees.calculate_fees(10_000, 1, 0, 501) == (125, "pro_overage")
-    # L33t: 0 fee; fair-use guard trips above 100k txs
+    # L33t: 0 fee; fair-use guard trips above 127,669 txs/mo (econ-derived;
+    # see PRICING.md). Boundary is exclusive: txs_used == cap is still l33t.
     assert fees.calculate_fees(10_000, 2, 0, 0) == (0, "l33t")
+    assert fees.calculate_fees(10_000, 2, 0, 127_668) == (0, "l33t")
+    assert fees.calculate_fees(10_000, 2, 0, 127_669) == (0, "l33t")
+    assert fees.calculate_fees(10_000, 2, 0, 127_670) == (0, "l33t_fair_use_review")
     assert fees.calculate_fees(10_000, 2, 99_999_999, 99_999_999) == (0, "l33t_fair_use_review")
     # Negative amount refused
     assert fees.calculate_fees(-1, 0, 0, 0) == (0, "refused_negative_amount")
@@ -249,12 +255,14 @@ def test_http_execute_402_then_test_payment(server):
     code, b402, h402 = _post(server, "/api/pay/execute", body)
     assert code == 402
     assert b402["x402Version"] == 1
-    assert b402["accepts"][0]["price_cents"] == 25
+    assert b402["accepts"][0]["price_cents"] == fees.ROUTE_PRICE_CENTS == 1
     assert {k.lower(): v for k, v in h402.items()}.get("payment-required") == "1"
     # paid (test mode) -> signed receipt
     code, b200, _ = _post(server, "/api/pay/execute", body,
                           {"X-Test-Payment": "ok"})
     assert code == 200 and b200["ok"] is True
+    assert b200["charged_cents"] == 1
+    assert b200["route_price_cents"] == 1
     env = b200["attestation"]
     assert env["alg"] == "ed25519"
     receipt = json.loads(env["payload"])
