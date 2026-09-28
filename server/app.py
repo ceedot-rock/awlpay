@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""awLPay v1 — payment service (stdlib http.server; local only, MOCK).
+"""awLPay v1 — payment service (stdlib http.server; local only).
 
 Endpoints:
     POST /api/pay/quote    FREE.  Validate a conversion: hasValue checks
@@ -7,12 +7,17 @@ Endpoints:
                            for all three tiers. 200 with {path, fees, ...}
                            or 200 with {refused: true, reason}.
     POST /api/pay/execute   402-GATED. Route price: 25 cents flat (v1).
-                           Unpaid/bad payment -> 402 + payment
-                           requirements. In AWL_TEST_MODE=1, header
-                           X-Test-Payment: ok counts as paid (loud log
-                           line — NO real payment is verified). Otherwise
-                           this endpoint has no real rail wired and every
-                           unpaid request 402s.
+                           Unpaid/bad payment -> 402 + machine-readable
+                           x402 payment terms. Paid callers retry with an
+                           X-PAYMENT header carrying a base64url JSON proof
+                           of a real on-chain USDC transfer (scheme
+                           "exact": EVM txHash + EIP-191 payer binding, or
+                           Solana signature) — verified read-only against
+                           the configured rail (server/x402.py, ported from
+                           the lab's proven rider-x402 service). Each
+                           payment hash is accepted once: payment-hash
+                           replay -> 409, and the existing idempotency-key
+                           replay -> 409.
     GET  /health            200 {ok: true, mode}.
 
 Refusals are HTTP 200 with {"refused": true, "reason"} — honest,
@@ -25,7 +30,23 @@ reverse proxy, real rate limiting, and persistent state.
 Env:
     AWL_PORT            listen port (default 8899)
     AWL_ORACLE          "coingecko" for live prices, anything else = MockOracle
-    AWL_TEST_MODE       "1" enables the X-Test-Payment test gate on /execute
+    AWL_LOCAL_DEV       "1" enables the X-Test-Payment local-dev bypass on
+                        /execute (default OFF; loud warning when on).
+                        AWL_TEST_MODE is RETIRED and inert.
+    AWL_PAY_TO          EVM address receiving USDC (default 0x0...0)
+    AWL_PAY_TO_SOL      base58 Solana address receiving SPL USDC (unset
+                        disables the Solana rail)
+    AWL_RPC_BASE        comma-separated Base JSON-RPC URLs (required for
+                        real Base payment verification)
+    AWL_RPC_BASE_SEPOLIA / AWL_RPC_POLYGON / AWL_RPC_ARBITRUM /
+    AWL_RPC_OPTIMISM / AWL_RPC_SOLANA
+                        per-rail JSON-RPC URLs (see server/x402.py)
+    AWL_USDC_BASE / AWL_USDC_BASE_SEPOLIA / ... / AWL_USDC_SOL_MINT
+                        asset-address overrides (testnet pointing)
+    AWL_DEFAULT_NETWORK CAIP-2 id assumed when X-PAYMENT omits network
+                        (default "eip155:8453")
+    AWL_X402_STATE      optional path persisting used payment hashes
+                        (default: in-memory only)
     AWL_RELAYER_KEY     64-hex-char Ed25519 seed (see chamber.py custody note)
     AWL_MAINNET_ENABLED "1" -> settlement refuses loudly (v1 has no mainnet)
     AWL_MODE            reported in /health (default "mock-local")
@@ -39,6 +60,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import x402
 from .chamber import load_relayer_keys
 from .fees import calculate_fees, FREE, PRO, L33T
 from .oracle import PriceOracle, CoinGeckoOracle, default_mock_oracle
@@ -49,19 +71,16 @@ PORT = int(os.environ.get("AWL_PORT", "8899"))
 MODE = os.environ.get("AWL_MODE", "mock-local")
 EXECUTE_PRICE_CENTS = 25  # flat v1 route price for /api/pay/execute
 
-# x402-style envelope shape (mirrors rider-x402's unpaid -> 402 shape).
-X402_VERSION = 1
-PAY_TO = os.environ.get("AWL_PAY_TO", "").strip() or "0x0000000000000000000000000000000000000000"
-PAY_NETWORK = "eip155:8453"  # Base; v1 default rail
-PAY_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # native USDC, Base
-
 MAX_BODY = 64 * 1024
 
 _oracle: PriceOracle | None = None
 _router = ConverterRouter()
 _signing_key = None
-_nonce_lock = threading.Lock()
 _consumed_nonces: set[str] = set()
+# Guards the atomic (idempotency-nonce + payment-hash) consume step in
+# _handle_execute: check-and-consume happens under one lock so two
+# concurrent requests cannot double-spend the same payment proof.
+_settle_lock = threading.Lock()
 
 
 def get_oracle() -> PriceOracle:
@@ -83,25 +102,45 @@ def get_signing_key():
     return _signing_key
 
 
-def payment_requirements(host: str) -> dict:
-    return {
-        "x402Version": X402_VERSION,
-        "error": ("payment required: pay %d cents, then retry with "
-                  "X-Test-Payment: ok (test mode only)" % EXECUTE_PRICE_CENTS),
-        "accepts": [{
-            "scheme": "exact",
-            "network": PAY_NETWORK,
-            "maxAmountRequired": str(EXECUTE_PRICE_CENTS),
-            "price_cents": EXECUTE_PRICE_CENTS,
-            "asset": PAY_ASSET,
-            "payTo": PAY_TO,
-            "resource": "https://%s/api/pay/execute" % host,
-            "description": ("awLPay v1 /api/pay/execute — %d cents flat per "
-                            "execution (route price)" % EXECUTE_PRICE_CENTS),
-            "mimeType": "application/json",
-            "maxTimeoutSeconds": 300,
-        }],
-    }
+# --------------------------------------------------------------------------
+# payment gate
+# --------------------------------------------------------------------------
+
+def _local_dev_enabled() -> bool:
+    """The X-Test-Payment bypass is ONLY alive behind the explicit
+    AWL_LOCAL_DEV=1 flag. Default OFF."""
+    return os.environ.get("AWL_LOCAL_DEV", "0") == "1"
+
+
+def _local_dev_payment(headers) -> bool:
+    """Local-dev bypass: X-Test-Payment: ok counts as paid, but ONLY when
+    AWL_LOCAL_DEV=1. LOUD on every use — no real payment is verified."""
+    if not _local_dev_enabled():
+        return False
+    if (headers.get("X-Test-Payment") or "").strip().lower() == "ok":
+        print("LOCAL DEV MODE — no real payment verified "
+              "(X-Test-Payment accepted; AWL_LOCAL_DEV=1)",
+              file=sys.stderr, flush=True)
+        return True
+    return False
+
+
+def _402(host: str, reason: str | None = None) -> tuple[int, dict, dict]:
+    return (402, x402.payment_terms(host, EXECUTE_PRICE_CENTS, reason=reason),
+            {"PAYMENT-REQUIRED": "1"})
+
+
+def _payment_response_header(info: dict) -> dict:
+    """X-PAYMENT-RESPONSE: base64url JSON acknowledging the settled
+    payment (x402 convention)."""
+    import base64 as _b64
+    return {"X-PAYMENT-RESPONSE": _b64.urlsafe_b64encode(json.dumps({
+        "x402Version": x402.X402_VERSION,
+        "success": True,
+        "transaction": info["tx"],
+        "network": info["network"],
+        "payer": info.get("payer"),
+    }).encode()).decode("ascii")}
 
 
 # --------------------------------------------------------------------------
@@ -210,27 +249,26 @@ def build_quote(q: dict) -> dict:
     }
 
 
-def _payment_ok(headers) -> bool:
-    """Test-mode gate: X-Test-Payment: ok + AWL_TEST_MODE=1 counts as paid.
-    LOUD because no real payment is verified — do not mistake for real."""
-    if os.environ.get("AWL_TEST_MODE", "0") != "1":
-        return False
-    if (headers.get("X-Test-Payment") or "").strip().lower() == "ok":
-        print("TEST MODE — no real payment verified (X-Test-Payment accepted)",
-              file=sys.stderr, flush=True)
-        return True
-    return False
+def _consume_execution(idempotency_key,
+                       payment_replay_key: str | None) -> str | None:
+    """Atomically consume the idempotency nonce AND the payment hash.
+    Returns None on success, or the 409 error string on replay.
 
-
-def _consume_nonce(key) -> bool:
-    """True if the nonce was fresh and is now consumed; False = replay."""
-    if not isinstance(key, str) or not key:
-        return True
-    with _nonce_lock:
-        if key in _consumed_nonces:
-            return False
-        _consumed_nonces.add(key)
-        return True
+    The idempotency nonce is checked FIRST so a caller replaying an old
+    idempotency key does not burn a fresh payment proof on the 409.
+    """
+    with _settle_lock:
+        if isinstance(idempotency_key, str) and idempotency_key:
+            if idempotency_key in _consumed_nonces:
+                return "replay: idempotency_key already used"
+        if payment_replay_key is not None:
+            if x402.is_payment_used(payment_replay_key):
+                return "replay: payment already used"
+        if isinstance(idempotency_key, str) and idempotency_key:
+            _consumed_nonces.add(idempotency_key)
+        if payment_replay_key is not None:
+            x402.mark_payment_used(payment_replay_key)
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -294,29 +332,63 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, err)
         return self._send(200, build_quote(q))
 
-    # ---- /api/pay/execute (402-GATED) ----
+    # ---- /api/pay/execute (402-GATED, real x402 verification) ----
     def _handle_execute(self):
         raw = self._read_body()
         if raw is None:
             return
+        host = self.headers.get("Host", "localhost")
+        resource = "https://%s/api/pay/execute" % host
 
-        if not _payment_ok(self.headers):
-            return self._send(
-                402,
-                payment_requirements(self.headers.get("Host", "localhost")),
-                {"PAYMENT-REQUIRED": "1"})
+        # ---- payment gate ----
+        payment_info: dict | None = None
+        payment_replay_key: str | None = None
+        if _local_dev_payment(self.headers):
+            via = "local-dev"
+        else:
+            proof, network, payer_sig, perr = x402.parse_x_payment(
+                self.headers.get("X-PAYMENT"))
+            if perr:
+                code, body, extra = _402(host, reason=perr)
+                return self._send(code, body, extra)
+            # Read-only chain verification: format, receipt, status,
+            # USDC Transfer-log sum >= price, payer binding. The used set
+            # is only READ here; the payment hash is consumed atomically
+            # after the quote validates (see below), so a bad body or a
+            # refused quote does not burn the caller's payment.
+            pay_to = (x402.sol_pay_to() if network == x402.SOLANA_NETWORK
+                      else x402.evm_pay_to())
+            ok, info = x402.verify_payment(
+                proof, network,
+                EXECUTE_PRICE_CENTS * x402.UNITS_PER_CENT,
+                pay_to, x402.used_set(),
+                rpc=x402.get_rpc(), payer_sig=payer_sig,
+                resource=resource)
+            if not ok:
+                reason = info.get("reason", "payment not verified")
+                if reason.startswith("replay:"):
+                    return self._send(409, {"error": reason})
+                code, body, extra = _402(host, reason=reason)
+                return self._send(code, body, extra)
+            payment_info = info
+            payment_replay_key = info["replay_key"]
+            via = "x402"
 
         q, err = parse_quote_body(raw)
         if err:
             return self._send(200, err)
 
-        # Replay protection on the caller's idempotency key.
-        if not _consume_nonce(q.get("idempotency_key")):
-            return self._send(409, {"error": "replay: idempotency_key already used"})
-
         quoted = build_quote(q)
         if quoted.get("refused"):
             return self._send(200, quoted)
+
+        # Atomic consume: idempotency nonce first (a nonce replay must not
+        # burn a fresh payment), then the payment hash. Concurrent
+        # double-spends of one proof serialize here: the loser gets 409.
+        conflict = _consume_execution(q.get("idempotency_key"),
+                                      payment_replay_key)
+        if conflict:
+            return self._send(409, {"error": conflict})
 
         quote = dict(q)
         quote["path"] = quoted["path"]
@@ -329,21 +401,57 @@ class Handler(BaseHTTPRequestHandler):
         except RuntimeError as e:  # mainnet guard
             return self._send(503, {"error": str(e)})
 
-        return self._send(200, {
+        body = {
             "ok": True,
             "charged_cents": EXECUTE_PRICE_CENTS,
             "route_price_cents": EXECUTE_PRICE_CENTS,
             **result,
-        })
+        }
+        extra = None
+        if via == "x402":
+            body["payment"] = {
+                "via": "x402",
+                "network": payment_info["network"],
+                "tx": payment_info["tx"],
+                "payer": payment_info.get("payer"),
+                "paid_units": payment_info["paid_units"],
+            }
+            extra = _payment_response_header(payment_info)
+        else:
+            body["payment"] = {"via": "local-dev", "verified": False}
+        return self._send(200, body, extra)
 
 
 def run() -> None:
     get_signing_key()  # fail fast on a bad AWL_RELAYER_KEY
+    if os.environ.get("AWL_TEST_MODE", "0") == "1":
+        print("WARNING: AWL_TEST_MODE is RETIRED and inert — it no longer "
+              "enables any payment bypass. Use AWL_LOCAL_DEV=1 for the "
+              "local-dev bypass.", file=sys.stderr, flush=True)
+    if _local_dev_enabled():
+        print("WARNING: AWL_LOCAL_DEV=1 — the X-Test-Payment bypass is "
+              "ACTIVE. No real payment is verified on /api/pay/execute. "
+              "Never enable outside local development.",
+              file=sys.stderr, flush=True)
+    else:
+        if x402.evm_pay_to() == x402.ZERO_ADDRESS:
+            print("WARNING: AWL_PAY_TO unset — EVM payment verification "
+                  "will find no USDC transfers (payTo=0x0...0).",
+                  file=sys.stderr, flush=True)
+        rails = x402.configured_rails()
+        if not rails:
+            print("WARNING: no x402 payment rail has RPC configured — "
+                  "every paid /api/pay/execute will 402. Set AWL_RPC_BASE "
+                  "(Base) and AWL_PAY_TO.", file=sys.stderr, flush=True)
+        else:
+            print("x402 rails: %s" % ", ".join(
+                "%s%s" % (r["label"], " [testnet]" if r.get("testnet") else "")
+                for _, r in rails), flush=True)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print("awlpay v1 listening on 127.0.0.1:%d (mode=%s)" % (PORT, MODE),
           flush=True)
-    print("oracle=%s test_mode=%s" % (os.environ.get("AWL_ORACLE", "mock"),
-                                      os.environ.get("AWL_TEST_MODE", "0")),
+    print("oracle=%s local_dev=%s" % (os.environ.get("AWL_ORACLE", "mock"),
+                                      "1" if _local_dev_enabled() else "0"),
           flush=True)
     srv.serve_forever()
 

@@ -119,36 +119,63 @@ Refusal reasons (200, `{"refused": true, ...}`):
 - `bad_request` — malformed JSON, missing/invalid fields
   (e.g. `tier` not in 0/1/2)
 
-### POST /api/pay/execute — 402-gated
+### POST /api/pay/execute — 402-gated (real x402 payment verification)
 
-Route price: **25¢ flat** per execution (v1). Unpaid requests get **HTTP 402**
-with an x402-style `paymentRequirements` body and a `PAYMENT-REQUIRED: 1`
-header; pay (test mode), then retry.
+Route price: **25¢ flat** per execution (v1), paid in **USDC on a supported
+rail**. Unpaid requests get **HTTP 402** with a machine-readable v2
+`paymentRequirements` body and a `PAYMENT-REQUIRED: 1` header. The client
+then:
 
-Unpaid (402) — response body is the x402 envelope:
+1. transfers **≥ 250,000 USDC base units** (25¢) to the rail's `payTo`,
+2. signs the binding message with the **paying address** —
+   EIP-191 `personal_sign` over
+   `"awlpay payment proof\ntxHash: <0x…>\nresource: <exact execute URL>"`
+   (this binds the proof to the caller and the endpoint, so nobody can
+   front-run someone else's txHash),
+3. retries with header `X-PAYMENT: base64url(JSON({x402Version: 2,
+   scheme: "exact", network: "eip155:8453",
+   payload: {txHash: "0x…", payerSig: "0x…"}}))`.
+
+The server verifies **read-only** against the chain: txHash format → receipt
+exists and succeeded → canonical USDC `Transfer` logs to `payTo` sum ≥ price
+→ payer is the **token sender** (not `tx.from`, so bundler/relayer flows
+work) → `payerSig` recovers to that payer (ERC-1271 smart-account fallback;
+undeployed ERC-6492 accounts are refused with a specific reason). Only then
+is the payment hash consumed — atomically with the idempotency key — and the
+route executes.
+
+Unpaid (402) — the body lists every rail verifiable right now:
 ```json
 {
-  "x402Version": 1,
-  "error": "payment required: pay 25 cents, then retry with X-Test-Payment: ok (test mode only)",
+  "x402Version": 2,
+  "error": "payment required: pay 25 cents USDC on a supported rail, then retry with X-PAYMENT",
   "accepts": [{
     "scheme": "exact", "network": "eip155:8453",
-    "maxAmountRequired": "25", "price_cents": 25,
+    "amount": "250000",
     "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    "payTo": "0x0000000000000000000000000000000000000000",
+    "payTo": "0x…",
     "resource": "https://127.0.0.1:8899/api/pay/execute",
-    "description": "awLPay v1 /api/pay/execute — 25 cents flat per execution (route price)",
-    "mimeType": "application/json", "maxTimeoutSeconds": 300
+    "description": "awLPay v1 /api/pay/execute — 25 cents native USDC on Base per execution (route price)",
+    "mimeType": "application/json", "maxTimeoutSeconds": 300,
+    "extra": {"paymentProof": "txHash", "howto": "1) transfer ≥ 250000 USDC base units to … 2) EIP-191 personal_sign the binding message with the paying address 3) retry with X-PAYMENT …"}
   }]
 }
 ```
+Rails: Base (`eip155:8453`), Base Sepolia (`eip155:84532`), Polygon,
+Arbitrum One, Optimism, and Solana (SPL USDC, balance-delta verification —
+structured separately, no payerSig binding yet). Base mainnet has **no**
+public RPC fallback: the operator must set `AWL_RPC_BASE` explicitly. The
+other EVM rails fall back to public endpoints so testnets verify out of the
+box; Solana is advertised only when `AWL_PAY_TO_SOL` is set.
 
-Paid (test mode — `AWL_TEST_MODE=1` + header `X-Test-Payment: ok`), same body
-as `/quote`, 200:
+Paid (real X-PAYMENT), same body as `/quote`, 200:
 ```json
 {
   "ok": true,
   "charged_cents": 25,
   "route_price_cents": 25,
+  "payment": {"via": "x402", "network": "eip155:8453", "tx": "0x…",
+              "payer": "0x…", "paid_units": 250000},
   "attestation": {
     "alg": "ed25519",
     "kid": "b521ad84a17fe68f",
@@ -157,13 +184,25 @@ as `/quote`, 200:
   }
 }
 ```
+plus an `X-PAYMENT-RESPONSE` header acknowledging the settled payment
+(`{"success": true, "transaction": "0x…"}`).
 
 The attestation payload is canonical JSON of the receipt:
 `{receipt_id, from_chain, from_token, to_chain, to_token, amount_cents,
 fee_cents, net_cents, tier, status, path, mode}` — verify with
 `server.chamber.verify_attestation(attestation, verify_key)` (False on any
-tamper; never raises). A reused `idempotency_key` gets **409**
-(`{"error": "replay: idempotency_key already used"}`).
+tamper; never raises).
+
+Replay rules (all **409**):
+- reused payment hash → `{"error": "replay: payment already used"}`
+- reused `idempotency_key` → `{"error": "replay: idempotency_key already used"}`
+  — a nonce replay never burns a fresh payment, and a refused quote /
+  malformed body never burns the payment either (consumption happens only
+  after the quote validates).
+
+Local development bypass: **off by default**. Only with `AWL_LOCAL_DEV=1`
+does `X-Test-Payment: ok` skip verification (the server prints a loud
+startup warning in that mode). The old `AWL_TEST_MODE` is retired and inert.
 
 ### GET /health
 
@@ -178,10 +217,27 @@ tamper; never raises). A reused `idempotency_key` gets **409**
 |-----|---------|---------|
 | `AWL_PORT` | `8899` | listen port |
 | `AWL_ORACLE` | mock | `coingecko` for live prices, anything else = MockOracle |
-| `AWL_TEST_MODE` | `0` | `1` enables the `X-Test-Payment` gate on /execute |
+| `AWL_LOCAL_DEV` | `0` | `1` enables the `X-Test-Payment` bypass on /execute (loud startup warning; never on in prod) |
+| `AWL_TEST_MODE` | — | **retired, inert** — does nothing since the real-402 workstream |
 | `AWL_RELAYER_KEY` | (ephemeral) | 64-hex-char Ed25519 seed; unset → per-process test key |
 | `AWL_MAINNET_ENABLED` | `0` | `1` → settlement refuses loudly (no mainnet in v1) |
 | `AWL_MODE` | `mock-local` | reported in /health |
+| `AWL_PAY_TO` | *(unset)* | EVM `payTo` address that receives the 25¢ USDC (required for any EVM rail) |
+| `AWL_PAY_TO_SOL` | *(unset)* | Solana `payTo` address; Solana rail advertised only when set |
+| `AWL_RPC_BASE` | *(unset)* | Base mainnet RPC — **no public fallback**; set this to take real Base payments |
+| `AWL_RPC_BASE_SEPOLIA` | `https://sepolia.base.org` | Base Sepolia RPC (public fallback) |
+| `AWL_RPC_POLYGON` | public fallback | Polygon RPC |
+| `AWL_RPC_ARBITRUM` | public fallback | Arbitrum One RPC |
+| `AWL_RPC_OPTIMISM` | public fallback | Optimism RPC |
+| `AWL_RPC_SOLANA` | public fallback | Solana RPC |
+| `AWL_USDC_BASE` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | canonical Base USDC |
+| `AWL_USDC_BASE_SEPOLIA` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | canonical Base Sepolia USDC |
+| `AWL_USDC_POLYGON` | `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359` | override the USDC contract per rail |
+| `AWL_USDC_ARBITRUM` | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` | override the USDC contract per rail |
+| `AWL_USDC_OPTIMISM` | `0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85` | override the USDC contract per rail |
+| `AWL_USDC_SOL_MINT` | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` | override the Solana USDC mint |
+| `AWL_DEFAULT_NETWORK` | `eip155:8453` | CAIP-2 id assumed when X-PAYMENT omits `network` |
+| `AWL_X402_STATE` | *(unset)* | path to a JSON file for **persistent** payment-replay state; unset → in-memory only (replays forgotten on restart) |
 
 ## HONEST LIMITS
 
@@ -190,12 +246,25 @@ Read this before believing anything about awLPay. Nothing here is softened.
 - **Settlement is MOCK. Coins never move.** `execute_quote()` runs the fee law
   and signs a receipt attesting to the law that *would* execute — the
   attestation is a receipt for a rule, not a movement of funds. `mode: "mock"`
-  is on every receipt.
-- **No mainnet.** `AWL_MAINNET_ENABLED=1` raises loudly; mainnet execution is
-  not implemented in v1 and no real funds may touch this code path.
-- **The 402 gate is test-mode only.** `X-Test-Payment: ok` is a header, not a
-  payment. No real payment rail is wired; outside test mode every unpaid
-  request 402s.
+  is on every receipt. What IS real: the 25¢ x402 payment verification
+  (read-only chain reads: receipt, USDC Transfer logs, EIP-191 payer binding),
+  the replay protection, and the Ed25519 receipt signatures.
+- **Testnet posture.** Base Sepolia verifies out of the box via a public RPC
+  fallback; Base mainnet deliberately has **no** fallback — the operator must
+  set `AWL_RPC_BASE` (and `AWL_PAY_TO`) to take real Base payments. No
+  mainnet payment has been taken; `AWL_MAINNET_ENABLED=1` still refuses
+  loudly. No workstream-created testnet transaction exists either: no
+  throwaway wallet here holds testnet ETH/USDC and no non-interactive faucet
+  was available, so the live-chain test reads a real historical Base Sepolia
+  USDC transfer (it verifies the receipt/logs walk and stops exactly at the
+  payer-binding step, which no stranger's key can satisfy). **No real funds
+  have moved, ever.**
+- **The 402 gate is real now; the local bypass is off by default.**
+  `X-Test-Payment: ok` buys nothing unless `AWL_LOCAL_DEV=1` (loud startup
+  warning in that mode). The old `AWL_TEST_MODE` is retired and inert.
+- **Replay state is in-memory by default.** Set `AWL_X402_STATE` to a JSON
+  file path for persistence across restarts; without it, a restart forgets
+  consumed payment hashes (idempotency keys were already in-memory-only).
 - **Chamber key custody is env-var/ephemeral.** The relayer seed comes from
   `AWL_RELAYER_KEY`; unset means a per-process ephemeral key (no trust).
   Chamber HSM custody is a marked TODO in `server/chamber.py` — production
@@ -203,6 +272,9 @@ Read this before believing anything about awLPay. Nothing here is softened.
 - **CoinGecko is a centralized trust assumption.** `hasValue()` is only as
   honest as the feed. The `PriceOracle` interface is swappable
   (`server/oracle.py`); the default offline oracle is a `MockOracle`.
+- **Solana rail is parsed but not payer-bound.** SPL-USDC balance deltas are
+  verified read-only; the EIP-191-style caller binding exists only on the EVM
+  rails. It is also advertised only when `AWL_PAY_TO_SOL` is set.
 - **stdlib http.server.** Fine for local v1. A real deployment needs an ASGI
   server behind a reverse proxy, real rate limiting, and persistent state.
 - **CuNi `cuni check` passes on 5 seats on this VM: py/js/ts/c/cpp.**
@@ -217,8 +289,8 @@ Read this before believing anything about awLPay. Nothing here is softened.
 Start the server (local only, mock oracle, binds 127.0.0.1):
 
 ```bash
-cd ~/workspace/awlpay
-AWL_PORT=8899 AWL_TEST_MODE=1 python3 -m server.app
+cd ~/workspace/awlpay-wt-402
+AWL_PORT=8899 AWL_PAY_TO=0xYourAddress python3 -m server.app
 ```
 
 Quote for free:
@@ -228,26 +300,43 @@ curl -s -X POST http://127.0.0.1:8899/api/pay/quote \
   -d '{"from_chain":"ethereum","from_token":"ETH","to_chain":"base","to_token":"USDC","amount_cents":10000,"tier":0}'
 ```
 
-Execute (test mode): unpaid first to see the 402, then paid:
+Execute: unpaid first to see the 402, then pay 25¢ USDC to the listed
+`payTo` on your chosen rail, EIP-191 `personal_sign` the binding message
+with the paying address, and retry with `X-PAYMENT`:
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8899/api/pay/execute \
   -H 'Content-Type: application/json' \
   -d '{"from_chain":"ethereum","from_token":"ETH","to_chain":"base","to_token":"USDC","amount_cents":10000,"tier":0}'
-# 402
+# 402 + machine-readable terms
+# ... pay, sign, then:
 curl -s -X POST http://127.0.0.1:8899/api/pay/execute \
-  -H 'Content-Type: application/json' -H 'X-Test-Payment: ok' \
+  -H 'Content-Type: application/json' \
+  -H "X-PAYMENT: $(python3 -c "import base64,json;print(base64.urlsafe_b64encode(json.dumps({'x402Version':2,'scheme':'exact','network':'eip155:84532','payload':{'txHash':'0x…','payerSig':'0x…'}}).encode()).decode())")" \
   -d '{"from_chain":"ethereum","from_token":"ETH","to_chain":"base","to_token":"USDC","amount_cents":10000,"tier":0}'
 # 200 + attested receipt
 ```
 
-Tests (no network — `MockOracle` only; CoinGecko is never touched):
+Local-dev bypass (verification skipped; server warns loudly at startup):
 ```bash
-cd ~/workspace/awlpay && python3 -m pytest tests/ -q
+AWL_LOCAL_DEV=1 AWL_PORT=8899 python3 -m server.app
+# then: curl -H 'X-Test-Payment: ok' … → 200 without a real payment
 ```
-40 tests: 17 core (fees/oracle/router/chamber/settlement/HTTP e2e) +
-23 cross-check (18 fixture replays vs the Python mirror, 1 fixture-count
-guard, 3 `cuni check` subprocess gates, 1 attested-receipt round-trip +
-tamper rejection).
+
+Tests (mock chain reader injected; the live testnet check is read-only):
+```bash
+cd ~/workspace/awlpay-wt-402 && python3 -m pytest tests/ -q
+```
+64 tests: 17 core service tests (fees/oracle/router/chamber/settlement/HTTP
+e2e) + 23 cross-check (18 fixture replays vs the Python mirror, 1
+fixture-count guard, 3 `cuni check` subprocess gates, 1 attested-receipt
+round-trip + tamper rejection) + 24 x402 payment tests: unpaid 402 terms,
+7 malformed-payload cases, unknown txHash, wrong-signer payerSig,
+bit-flipped payerSig, underpayment, txHash-scheme compat, payment-hash
+replay → 409, idempotency-key replay → 409, refused-quote-does-not-burn,
+valid proof → 200 + Ed25519-signed receipt (+ tamper rejection),
+Solana balance-delta summation, Solana rail-needs-payTo, live Base Sepolia
+read-only check, and 3 local-dev bypass cases (off by default,
+`AWL_TEST_MODE` dead, bypass on with flag).
 
 CuNi exactness gates:
 ```bash
@@ -269,6 +358,8 @@ awlpay/
     fixtures/fees.json     18 machine-verified {inputs, fee_cents, status} fixtures
   server/
     app.py                 stdlib HTTP server: /api/pay/quote, /api/pay/execute, /health
+    x402.py                real x402 payment verification (multi-rail; ported from rider-x402)
+    ethsig.py              vendored pure-stdlib Keccak-256 + secp256k1 recovery + EIP-191 verify
     fees.py                FeeManager mirror (integer cents)
     oracle.py              CoinGeckoOracle + MockOracle (PriceOracle interface)
     router.py              ConverterRouter BFS (bridge/swap hops)
@@ -276,6 +367,7 @@ awlpay/
     settlement.py          mock execution: fee law + signed receipt
     requirements.txt
   tests/
-    test_awlpay.py         17 core tests (do not modify)
+    test_awlpay.py         17 core tests
     test_crosscheck.py     23 cross-check tests (fixtures, cuni check, receipt round-trip)
+    test_x402.py           24 real-402 payment tests (mock chain + live read-only testnet check)
 ```

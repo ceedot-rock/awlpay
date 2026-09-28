@@ -11,6 +11,93 @@ Built by coordinator + 3 workstreams. Local only. No commits, no deploys, no spe
   - `spec/FeeManager.cuni`, `spec/SettlementEngine.cuni`, `spec/Profile.cuni`
 - **Live smoke test**: quote SOL→ETH returned a 4-hop path (swap→bridge→swap) with all three tiers' fees; free tier on $1000.00 → fee 1025¢ ($10.00 + $0.25) ✓; unpaid execute → 402; test-paid execute → signed Ed25519 receipt; idempotency replay → 409.
 
+---
+
+## Workstream 2 — real HTTP 402 verification (2026-09-28, branch `ws-402`)
+
+Replaced the test-mode 402 gate with real x402 payment verification, ported
+from the proven `~/workspace/rider-x402` logic (no crypto reimplemented).
+
+### Verified numbers
+- **pytest: 64 passed, 0 failed, 3 consecutive runs**
+  (`cd ~/workspace/awlpay-wt-402 && .venv/bin/python -m pytest tests/ -q`)
+  - 17 core service tests (green; adapted from `AWL_TEST_MODE` to the new gate)
+  - 23 cross-check tests (untouched, green)
+  - **24 new** `tests/test_x402.py`: unpaid → 402 with v2 machine-readable
+    terms; 7 malformed/tampered `X-PAYMENT` cases → 402 with a reason;
+    unknown txHash → 402; wrong-signer and bit-flipped `payerSig` → 402;
+    underpayment → 402; `txHash`-scheme compat → 200; payment-hash replay →
+    409; idempotency-key replay → 409 (fresh payment NOT burned);
+    refused-quote/malformed-body does NOT burn the payment; valid mocked
+    proof → 200 + `X-PAYMENT-RESPONSE` + Ed25519 receipt that verifies
+    (and fails verification when tampered); Solana balance-delta summation
+    and rail-not-enabled parsing; **live read-only Base Sepolia check**;
+    local-dev bypass off by default / `AWL_TEST_MODE` inert / bypass works
+    with `AWL_LOCAL_DEV=1`.
+- **Bugs found and fixed during the workstream:**
+  - `x402.mark_payment_used()` deadlocked on first use (nested acquisition
+    of a non-reentrant `_used_lock` via `_load_used()`) → `_used_lock` is now
+    an `RLock`.
+  - The test-only ECDSA signer normalized `s` to low-s without flipping the
+    `v` parity bit, which breaks ecrecover (key recovery is not
+    malleability-invariant) → test signer now emits wallet-shaped
+    signatures (negate `s`, flip `v` parity), which the verifier's low-s
+    guard accepts and recovers correctly.
+
+### What works now
+- `POST /api/pay/execute`: unpaid/malformed/invalid → **402** with v2
+  `paymentRequirements` (`amount` in USDC base units, `payTo`, `resource`,
+  per-rail `howto`); verified payment → **200** with `payment` metadata,
+  `X-PAYMENT-RESPONSE` header, and the signed Ed25519 receipt; replays →
+  **409** (payment hash and idempotency key tracked separately, consumed
+  atomically only after the quote validates).
+- Verification is **read-only**: txHash format → receipt exists+ok →
+  canonical USDC `Transfer` logs to `payTo` sum ≥ 25¢ → payer = token sender
+  (not `tx.from`) → EIP-191 `payerSig` binding over
+  `"awlpay payment proof\ntxHash: …\nresource: …"` (ERC-1271 smart-account
+  fallback; ERC-6492 undeployed refused). Binding message domain-separates
+  awLPay from rider-x402 proofs.
+- Multi-rail table: Base, Base Sepolia, Polygon, Arbitrum One, Optimism
+  (EVM); Solana structured separately (SPL-USDC balance deltas, no
+  payerSig binding yet). Adding a rail = one table entry + its `AWL_RPC_*`
+  env. Base mainnet has **no public RPC fallback** (operator must configure);
+  testnet rails fall back to public endpoints.
+- Replay state: in-memory by default, optional JSON persistence via
+  `AWL_X402_STATE` (thread-safe via `RLock`).
+- CoinGecko oracle stays live; `AWL_LOCAL_DEV=1` is the only bypass (off by
+  default, loud startup warning); `AWL_TEST_MODE` is retired and inert.
+
+### Testnet limitation (honest)
+No workstream-created testnet transaction exists: no throwaway wallet here
+holds testnet ETH/USDC and no non-interactive faucet was reachable, so a
+payer-bound end-to-end testnet payment could not be created. The live-chain
+test instead reads a real historical Base Sepolia USDC transfer
+(`0x37f52d3f…1e00`, 1,000 units, status ok): the verifier walks the real
+receipt and Transfer logs and stops exactly at the missing-`payerSig` step —
+which no stranger's key can satisfy. **No real funds moved, ever;** all
+signing tests use a throwaway test key with a fixed nonce.
+
+### What's still stubbed
+- **Settlement is still MOCK** — the receipt attests to the law that *would*
+  execute; coins never move.
+- Solana rail is parsed and sum-verified but not caller-bound.
+- `server/ethsig.py` still carries a dead `binding_message` helper with
+  rider-x402's text (the live one is `x402.binding_message`); left untouched
+  as provenance, do not call it.
+- stdlib `http.server`; Chamber HSM custody still TODO; CoinGecko still a
+  centralized trust assumption (unchanged from v1).
+
+### Pointing at mainnet later (checklist, not done)
+1. Set `AWL_RPC_BASE` to the operator's Base RPC endpoint (no fallback by
+   design) and `AWL_PAY_TO` to the real treasury address.
+2. Set `AWL_RELAYER_KEY` to the production Ed25519 seed (Chamber HSM when
+   ready); set `AWL_X402_STATE` to a persistent path.
+3. Confirm `AWL_LOCAL_DEV` is unset and `AWL_MAINNET_ENABLED` per policy.
+4. Fund a throwaway wallet with a few cents of Base USDC, pay 25¢ through
+   the real flow, verify the 200 + receipt, then retire the throwaway.
+5. Nothing in code needs changing — mainnet vs testnet is config
+   (`AWL_RPC_*` / `AWL_USDC_*`), never a code branch.
+
 ## What works
 - `POST /api/pay/quote` (free): hasValue() gate on both tokens → BFS conversion path across 5 chains (ethereum, base, polygon, arbitrum, solana; USDC/ETH/SOL) → fees quoted for all three tiers → or honest 200 `{refused: true, reason}` (`unknown_token_no_price`, `no_conversion_path`, `dust_eaten_by_fees`).
 - `POST /api/pay/execute` (402-gated, 25¢ route price): tier caps enforced (pro: volume+amount ≤ 3,000,000¢ AND txs < 500 → 0 fee; overage → free pricing), dust refused (net ≤ 0), receipt signed with real Ed25519.

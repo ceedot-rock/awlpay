@@ -9,7 +9,8 @@ import urllib.request
 
 import pytest
 
-sys.path.insert(0, os.path.expanduser("~/workspace/awlpay"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
 
 from server import fees, oracle, router, chamber, settlement  # noqa: E402
 from server.oracle import MockOracle  # noqa: E402
@@ -186,8 +187,14 @@ def _post(port, path, body, headers=None):
 
 @pytest.fixture(scope="module")
 def server():
-    os.environ["AWL_TEST_MODE"] = "1"
+    # Local-dev bypass ONLY behind the explicit flag (AWL_TEST_MODE is
+    # retired and inert — see test_x402.py).
+    os.environ["AWL_LOCAL_DEV"] = "1"
     os.environ["AWL_PORT"] = "8899"
+    # Dummy URL: the rail counts as configured (so the 402 lists Base)
+    # but no real chain is ever touched — this module only exercises the
+    # local-dev bypass. Real verification is covered in test_x402.py.
+    os.environ["AWL_RPC_BASE"] = "http://127.0.0.1:9/"
     from server import app as appmod
     t = threading.Thread(target=appmod.run, daemon=True)
     t.start()
@@ -239,19 +246,24 @@ def test_http_quote_refusals(server):
     assert code == 200 and body["reason"] == "bad_request"
 
 
-def test_http_execute_402_then_test_payment(server):
+def test_http_execute_402_then_local_dev_payment(server):
     body = {"from_chain": "ethereum", "from_token": "ETH",
             "to_chain": "base", "to_token": "USDC",
             "amount_cents": 10_000, "tier": 1,
             "volume_used_cents": 0, "txs_used": 0,
             "idempotency_key": "test-nonce-1"}
-    # unpaid -> 402 + requirements
+    # unpaid -> 402 + machine-readable x402 terms
     code, b402, h402 = _post(server, "/api/pay/execute", body)
     assert code == 402
-    assert b402["x402Version"] == 1
-    assert b402["accepts"][0]["price_cents"] == 25
+    assert b402["x402Version"] == 2
+    assert b402["accepts"], "402 must list at least one verifiable rail"
+    first = b402["accepts"][0]
+    assert first["scheme"] == "exact"
+    assert first["network"] == "eip155:8453"
+    assert first["amount"] == "250000"  # 25c in USDC base units
+    assert first["extra"]["howto"], "402 terms must tell the payer how to pay"
     assert {k.lower(): v for k, v in h402.items()}.get("payment-required") == "1"
-    # paid (test mode) -> signed receipt
+    # paid (local-dev bypass) -> signed receipt
     code, b200, _ = _post(server, "/api/pay/execute", body,
                           {"X-Test-Payment": "ok"})
     assert code == 200 and b200["ok"] is True
@@ -259,6 +271,7 @@ def test_http_execute_402_then_test_payment(server):
     assert env["alg"] == "ed25519"
     receipt = json.loads(env["payload"])
     assert receipt["mode"] == "mock" and receipt["net_cents"] == 10_000
+    assert b200["payment"] == {"via": "local-dev", "verified": False}
     # replay -> 409
     code, b409, _ = _post(server, "/api/pay/execute", body,
                           {"X-Test-Payment": "ok"})
