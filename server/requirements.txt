@@ -11,7 +11,7 @@ idna==3.20
 typing-extensions==4.16.0
 # --- optional: ONLY needed for AWL_EXECUTION_MODE=dryrun/broadcast ---
 # server/chains.py imports these lazily; mock mode and the test suite run
-# without them. Unpinned deliberately: any recent web3.py / solders works
-# against the testnet JSON-RPC surface used here.
-web3
-solders
+# without them. Commented out for the Fly mock-mode deploy (keeps the
+# 256MB boot light); uncomment + reinstall to enable dryrun/broadcast.
+# web3
+# solders
