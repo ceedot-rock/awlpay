@@ -2,12 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content="AwLPay wallets and settle demo — stubs only, not live money." />
     <meta name="theme-color" content="#0b0b0c" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="AwLPay" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>AwLPay — Wallets & Settle</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="../brand/awlpay-app-icon-180.png" />
@@ -51,6 +52,14 @@
         </p>
       </section>
 
+      <div class="install-banner card" style="margin-bottom:1.25rem">
+        <p>Same app on Android and iPhone. Chrome → Install app. Safari → Add to Home Screen.</p>
+        <div class="actions">
+          <button type="button" class="btn btn--primary" id="install-app">Install on this phone</button>
+        </div>
+        <p class="hint" id="install-note" hidden></p>
+      </div>
+
       <div class="tabs" role="tablist" aria-label="AwLPay surfaces">
         <button type="button" role="tab" data-tab="wallets" class="is-active" aria-selected="true">
           Wallets
@@ -67,14 +76,7 @@
             <form class="form" id="form-create-wallet">
               <div class="field">
                 <label for="owner_id">Owner id</label>
-                <input
-                  id="owner_id"
-                  name="owner_id"
-                  type="text"
-                  autocomplete="username"
-                  placeholder="you@example.com or agent-id"
-                  required
-                />
+                <input id="owner_id" name="owner_id" type="text" autocomplete="username" placeholder="you@example.com or agent-id" required />
               </div>
               <div class="field">
                 <label for="chain">Chain</label>
@@ -104,14 +106,7 @@
             <form class="form" id="form-balance">
               <div class="field">
                 <label for="balance_wallet_id">Wallet id</label>
-                <input
-                  id="balance_wallet_id"
-                  name="wallet_id"
-                  type="text"
-                  class="mono"
-                  placeholder="wlt_…"
-                  required
-                />
+                <input id="balance_wallet_id" name="wallet_id" type="text" class="mono" placeholder="wlt_…" required />
               </div>
               <div class="actions">
                 <button class="btn btn--ghost" type="submit">Get balance</button>
@@ -132,9 +127,7 @@
         <div class="grid-2">
           <div class="card">
             <h2>Quote fees</h2>
-            <p class="lede">
-              Same math as the SDK <code>calculateFees</code> — free / pro / l33t locked tiers.
-            </p>
+            <p class="lede">Same math as the SDK <code>calculateFees</code> — free / pro / l33t locked tiers.</p>
             <form class="form" id="form-quote">
               <div class="row cols-2">
                 <div class="field">
@@ -154,7 +147,6 @@
                 <div class="field">
                   <label for="quote-vol">Month volume so far (USD)</label>
                   <input id="quote-vol" type="number" min="0" step="1" value="0" />
-                  <span class="hint">Pro: $0 fee under $30k volume <em>or</em> 500 txs</span>
                 </div>
                 <div class="field">
                   <label for="quote-txs">Month txs so far</label>
@@ -168,23 +160,12 @@
               <pre class="result" id="quote-result" hidden></pre>
             </form>
           </div>
-
           <div class="card">
             <h2>Locked tiers</h2>
-            <p class="lede">Don’t invent numbers — these are the product lock.</p>
             <ul class="tier-legend">
-              <li>
-                <strong>Free</strong>
-                <span class="muted small">1.0% + $0.25 per settlement</span>
-              </li>
-              <li>
-                <strong>Pro · $39/mo</strong>
-                <span class="muted small">$0 platform fee under $30k volume or 500 txs; overage falls back to free formula</span>
-              </li>
-              <li>
-                <strong>L33t · $799/mo</strong>
-                <span class="muted small">$0 platform fee · unlimited (fair-use)</span>
-              </li>
+              <li><strong>Free</strong><span class="muted small">1.0% + $0.25 per settlement</span></li>
+              <li><strong>Pro · $39/mo</strong><span class="muted small">$0 under $30k volume or 500 txs</span></li>
+              <li><strong>L33t · $799/mo</strong><span class="muted small">$0 platform fee · unlimited (fair-use)</span></li>
             </ul>
           </div>
         </div>
@@ -193,10 +174,7 @@
       <section class="panel" data-panel="settle" role="tabpanel" aria-label="Settle" hidden>
         <div class="card">
           <h2>Settle</h2>
-          <p class="lede">
-            Anything→anything only when there’s value, a path, and fees that clear.
-            An agent wallet can settle once inside its 15-minute session.
-          </p>
+          <p class="lede">Anything→anything only when there’s value, a path, and fees that clear.</p>
           <form class="form" id="form-settle">
             <div class="row cols-2">
               <div class="field">
@@ -204,7 +182,6 @@
                 <select id="from_wallet" name="from_wallet" data-wallet-select data-placeholder="Pick from wallet" required>
                   <option value="">Pick from wallet</option>
                 </select>
-                <span class="hint">Or create wallets on the Wallets tab first</span>
               </div>
               <div class="field">
                 <label for="to_wallet">To wallet</label>
@@ -227,17 +204,9 @@
                 </select>
               </div>
             </div>
-            <fieldset class="checks" aria-describedby="settle-rules">
-              <legend class="sr-only">Settle conditions</legend>
-              <p id="settle-rules" class="hint" style="margin: 0 0 0.35rem">Stub conditions (demo switches):</p>
-              <label>
-                <input type="checkbox" name="has_value" checked />
-                <span><strong>hasValue</strong> — there’s real value to move</span>
-              </label>
-              <label>
-                <input type="checkbox" name="path_exists" checked />
-                <span><strong>path</strong> — a settle path exists between from → to</span>
-              </label>
+            <fieldset class="checks">
+              <label><input type="checkbox" name="has_value" checked /><span><strong>hasValue</strong></span></label>
+              <label><input type="checkbox" name="path_exists" checked /><span><strong>path</strong></span></label>
             </fieldset>
             <div class="actions">
               <button class="btn btn--primary" type="submit">Settle (demo)</button>
@@ -249,12 +218,12 @@
       </section>
 
       <p class="footer-note">
-        AwLPay demo UI · fees from <code>docs/fee-manager-spec.md</code> · shapes from
-        <code>openapi.yaml</code> · not live money · not a Fly deploy · installable as a PWA on Android
+        AwLPay demo UI · Android and iPhone · not live money · not Play · not App Store
       </p>
     </main>
 
     <script type="module" src="./js/app.js"></script>
+    <script src="./js/install.js"></script>
     <script>
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.register("./sw.js").catch(function () {});
