@@ -1,5 +1,15 @@
 # awLPay v1
 
+## What AwLPay is
+
+AwLPay is a payment product with no allowlist. It accepts any token on any chain — if the token has a verifiable price, it pays. You don't need to ask whether your chain or your coin is supported. If it has value, it works.
+
+Here is why that matters. Paying with crypto today means navigating a maze: is this chain supported, is this token accepted, which bridge, what rate, what fee. AwLPay collapses that to a single question — does it have a verifiable price? — and handles the rest. Its converter turns anything into anything whenever a conversion path exists and the amount survives the fees.
+
+And when the math doesn't work, it refuses the payment instead of giving you a bad rate. No silent slippage, no mystery haircut — a clean refusal beats a quietly unfair deal.
+
+The Free tier costs 1.0% plus $0.25 per payment. Pro is $39 a month with no platform fee under the cap — $30,000 in volume or 500 transactions a month, whichever comes first. L33t is $799 a month, unlimited with a fair-use guard on compute.
+
 **awLPay** is a payment product from Slid Phi Labs: **any chain, any token — if it has verifiable value.**
 
 The law: a conversion is only quoted when **both** tokens pass a `hasValue()` price check,
