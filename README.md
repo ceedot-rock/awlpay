@@ -55,10 +55,10 @@ cd web
 python3 -m http.server 5173
 ```
 
-Open [http://localhost:5173](http://localhost:5173). You’ll see wallets, fee quotes, and settle against local stubs. The yellow **Demo / stubs** badge means it’s not live money — `api.awlpay.com` isn’t up yet.
+Open [http://localhost:5173](http://localhost:5173). You’ll see wallets, fee quotes, and settle against local stubs. The yellow **Demo / stubs** badge means it’s not live money. The public API is live at `https://awlpay.fly.dev` (mock settlement).
 
 Fee math in the UI mirrors `sdk` `calculateFees` and `docs/fee-manager-spec.md`.
 
 ## Status
 
-**SoT is `exact/`.** Quotes use a consensus of the free public books. Route fees for obscure paths and cards sit in the same quote. SDK fee math still mirrors `exact/FeeManager.cuni`. **npm publish and Fly deploy: HOLD** until CoS green. Card quotes are priced, not captured.
+**SoT is `exact/`.** Quotes use a consensus of the free public books. Route fees for obscure paths and cards sit in the same quote. SDK fee math still mirrors `exact/FeeManager.cuni`. **npm publish: HOLD. Fly: LIVE** at `https://awlpay.fly.dev` (mock settlement — not live money). Card quotes are priced, not captured.

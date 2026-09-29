@@ -10,7 +10,7 @@ export class AwLPay {
   constructor(private cfg: AwLPayConfig) {}
 
   private async req(path: string, opts: RequestInit = {}) {
-    const res = await fetch(`${this.cfg.baseUrl ?? 'https://api.awlpay.com'}${path}`, {
+    const res = await fetch(`${this.cfg.baseUrl ?? 'https://awlpay.fly.dev'}${path}`, {
       ...opts,
       headers: {
         Authorization: `Bearer ${this.cfg.apiKey}`,

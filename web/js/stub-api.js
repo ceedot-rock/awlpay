@@ -1,5 +1,6 @@
 /**
- * Demo stubs matching OpenAPI shapes. api.awlpay.com is not live.
+ * Demo stubs matching OpenAPI shapes. Local demo only — the live API is
+ * https://awlpay.fly.dev (mock settlement).
  */
 import { calculateFees } from './fees.js';
 
