@@ -1,0 +1,12 @@
+.install-card {
+  border: 1px solid var(--border, #2a3140);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  background: var(--bg-elev, #12151c);
+  display: grid;
+  gap: 0.4rem;
+  margin: 0 0 1.25rem;
+}
+.install-card h2 { margin: 0; font-size: 1rem; }
+.install-card p { margin: 0; color: var(--muted, #b7c6d6); font-size: 0.92rem; }
+.badge-demo[data-kind="testnet"] { background: #3a2a00; color: #f5d36c; }
