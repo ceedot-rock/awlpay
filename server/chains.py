@@ -35,8 +35,11 @@ makes dry-run construction unit-testable without a network.
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import os
+import re
+import threading
 import urllib.request
 
 # --------------------------------------------------------------------------
@@ -93,6 +96,135 @@ USDC_DECIMALS = 6
 
 # Mainnet ids that can NEVER execute here, whatever the table says.
 _MAINNET_EVM_CHAIN_IDS = {1, 8453, 137, 42161}
+
+# ---------------------------------------------------------------------------
+# Toll settlement mainnet (Base). Corey's explicit authorization, recorded in
+# code 2026-09-29: the toll gates are live and "nothing should be mock".
+# This is the ONLY mainnet path in awLPay. Everything else still hard-refuses
+# mainnet via assert_testnet(). Requires TOLL_MAINNET_AUTHORIZED=1; without
+# it every call raises. Base (8453) + native USDC only. Logs loudly.
+# ---------------------------------------------------------------------------
+_TOLL_MAINNET_BASE = {
+    "label": "base", "family": "evm", "chain_id": 8453,
+    "rpc_env": "TOLL_RPC_BASE",
+    "rpc_default": "https://mainnet.base.org",
+    "native": "ETH", "native_decimals": 18,
+    "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "explorer": "https://basescan.org",
+    # Marker: only configs carrying this flag may use the toll broadcast
+    # path. The generic broadcast() never sees it.
+    "toll_mainnet": True,
+}
+
+# Max single toll settlement transfer, micro-USDC. Default $1,000.
+TOLL_MAX_TX_UUSDC = int(os.environ.get("TOLL_MAX_TX_UUSDC", "1000000000"))
+# Max total toll settlement per UTC day, micro-USDC. Default $10,000.
+TOLL_MAX_DAILY_UUSDC = int(os.environ.get("TOLL_MAX_DAILY_UUSDC",
+                                          "10000000000"))
+
+
+def assert_toll_mainnet() -> dict:
+    """Explicit mainnet authorization for toll escrow/bond settlement.
+
+    The single exception to the no-mainnet rule. Requires
+    TOLL_MAINNET_AUTHORIZED=1 in the environment. Returns the Base mainnet
+    config. Raises otherwise. Every successful call prints LOUD.
+    """
+    if os.environ.get("TOLL_MAINNET_AUTHORIZED", "0") != "1":
+        raise RuntimeError(
+            "REFUSED: TOLL_MAINNET_AUTHORIZED != 1 — "
+            "mainnet toll settlement is not authorized")
+    cfg = dict(_TOLL_MAINNET_BASE)
+    cfg["rpc_url"] = os.environ.get(cfg["rpc_env"], "").strip() \
+        or cfg["rpc_default"]
+    print("LOUD: toll mainnet settlement authorized — Base USDC", flush=True)
+    return cfg
+
+
+def get_toll_settle_seed(slot: str) -> bytes:
+    """Toll settlement key for `slot` (escrow|bonds). 64 hex chars.
+
+    TOLL_ESCROW_KEY / TOLL_BONDS_KEY. Fresh lab EOAs — NEVER Corey's keys.
+    """
+    if slot not in ("escrow", "bonds"):
+        raise ValueError("toll settle slot must be 'escrow' or 'bonds'")
+    raw = os.environ.get("TOLL_%s_KEY" % slot.upper(), "").strip()
+    if not raw:
+        raise RuntimeError(
+            "TOLL_%s_KEY is not set — cannot sign toll settlement" % slot.upper())
+    try:
+        seed = bytes.fromhex(raw)
+    except ValueError:
+        raise RuntimeError("TOLL_%s_KEY must be 64 hex chars" % slot.upper())
+    if len(seed) != 32:
+        raise RuntimeError("TOLL_%s_KEY must be 64 hex chars (32-byte seed)"
+                           % slot.upper())
+    return seed
+
+
+# ---------------------------------------------------------------------------
+# Toll settlement TESTNET (Base Sepolia, chain 84532). Pre-mainnet e2e ONLY.
+#
+# Separate flag (TOLL_TESTNET_SEPOLIA=1), separate chain, separate USDC
+# contract (Circle testnet USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e),
+# separate keys (TOLL_TESTNET_ESCROW_KEY/_BONDS_KEY), separate wallets,
+# separate state/ledger files. It can never select the mainnet config and
+# the mainnet path can never select it. Test funds only — no real money.
+# ---------------------------------------------------------------------------
+_TOLL_TESTNET_SEPOLIA = {
+    "label": "base-sepolia", "family": "evm", "chain_id": 84532,
+    "rpc_env": "TOLL_RPC_SEPOLIA",
+    "rpc_default": "https://sepolia.base.org",
+    "native": "ETH", "native_decimals": 18,
+    "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "explorer": "https://sepolia.basescan.org",
+    # Marker: only configs carrying this flag may use the testnet toll
+    # broadcast path. The mainnet broadcast requires toll_mainnet=True;
+    # the two markers are never on the same config.
+    "toll_testnet": True,
+}
+
+
+def assert_toll_testnet() -> dict:
+    """Explicit testnet authorization for toll settlement e2e.
+
+    Requires TOLL_TESTNET_SEPOLIA=1 in the environment. Returns the Base
+    Sepolia config. Raises otherwise. Every successful call prints LOUD.
+    """
+    if os.environ.get("TOLL_TESTNET_SEPOLIA", "0") != "1":
+        raise RuntimeError(
+            "REFUSED: TOLL_TESTNET_SEPOLIA != 1 — "
+            "testnet toll settlement is not enabled")
+    cfg = dict(_TOLL_TESTNET_SEPOLIA)
+    cfg["rpc_url"] = os.environ.get(cfg["rpc_env"], "").strip() \
+        or cfg["rpc_default"]
+    print("LOUD: toll TESTNET settlement enabled — Base Sepolia "
+          "(test funds only, NOT mainnet)", flush=True)
+    return cfg
+
+
+def get_toll_testnet_seed(slot: str) -> bytes:
+    """Toll TESTNET key for `slot` (escrow|bonds). 64 hex chars.
+
+    TOLL_TESTNET_ESCROW_KEY / TOLL_TESTNET_BONDS_KEY. Throwaway test keys —
+    never mainnet keys, never Corey's keys.
+    """
+    if slot not in ("escrow", "bonds"):
+        raise ValueError("toll settle slot must be 'escrow' or 'bonds'")
+    raw = os.environ.get("TOLL_TESTNET_%s_KEY" % slot.upper(), "").strip()
+    if not raw:
+        raise RuntimeError(
+            "TOLL_TESTNET_%s_KEY is not set — cannot sign testnet toll "
+            "settlement" % slot.upper())
+    try:
+        seed = bytes.fromhex(raw)
+    except ValueError:
+        raise RuntimeError("TOLL_TESTNET_%s_KEY must be 64 hex chars"
+                           % slot.upper())
+    if len(seed) != 32:
+        raise RuntimeError("TOLL_TESTNET_%s_KEY must be 64 hex chars "
+                           "(32-byte seed)" % slot.upper())
+    return seed
 _MAINNET_SOLANA_CLUSTERS = {"mainnet-beta"}
 
 _RPC_TIMEOUT_S = 15
@@ -188,9 +320,11 @@ def erc20_transfer_calldata(to_address: str, amount_base_units: int) -> str:
 class EvmAdapter:
     """Native + ERC-20 USDC transfers on one EVM testnet."""
 
-    def __init__(self, chain: str):
+    def __init__(self, chain: str, cfg_override: dict | None = None):
         self.chain = chain
-        self.cfg = assert_testnet(chain)
+        # cfg_override is for the toll mainnet path only (assert_toll_mainnet).
+        # Everything else still goes through assert_testnet's hard refusal.
+        self.cfg = cfg_override if cfg_override is not None else assert_testnet(chain)
         self._w3 = None
 
     # -- offline ---------------------------------------------------------
@@ -306,6 +440,70 @@ class EvmAdapter:
         tx_hash = w3.eth.send_raw_transaction(bytes.fromhex(raw))
         return tx_hash.hex()
 
+    def broadcast_toll_mainnet(self, raw_tx_hex: str) -> str:
+        """Broadcast a signed raw tx on the TOLL mainnet path.
+
+        This is the ONLY mainnet broadcast in awLPay. It never touches
+        broadcast_allowed()/assert_testnet(): instead it requires
+          - this adapter was built with the toll mainnet config
+            (cfg_override carrying toll_mainnet=True, chain_id 8453),
+          - TOLL_MAINNET_AUTHORIZED=1 at call time,
+          - the live RPC reporting chain id 8453.
+        Anything else raises. There is no override, no fallback, no flag
+        that widens it to another chain, token, or contract call.
+        """
+        if not (self.cfg.get("toll_mainnet") is True
+                and self.cfg.get("chain_id") == 8453):
+            raise RuntimeError(
+                "REFUSED: broadcast_toll_mainnet requires the toll mainnet "
+                "config (Base 8453) — this adapter is not toll-authorized")
+        assert_toll_mainnet()  # re-asserts TOLL_MAINNET_AUTHORIZED=1, logs LOUD
+        w3 = self._w3client()
+        self._check_chain_id()  # node must report 8453
+        raw = raw_tx_hex[2:] if raw_tx_hex.startswith("0x") else raw_tx_hex
+        tx_hash = w3.eth.send_raw_transaction(bytes.fromhex(raw))
+        return "0x" + tx_hash.hex()
+
+    def broadcast_toll_testnet(self, raw_tx_hex: str) -> str:
+        """Broadcast a signed raw tx on the TOLL TESTNET path (Sepolia).
+
+        Mirrors broadcast_toll_mainnet but for the pre-mainnet e2e: requires
+          - this adapter was built with the toll TESTNET config
+            (cfg_override carrying toll_testnet=True, chain_id 84532),
+          - TOLL_TESTNET_SEPOLIA=1 at call time,
+          - the live RPC reporting chain id 84532.
+        It REFUSES the mainnet config (toll_mainnet=True) — the two paths
+        can never cross. Anything else raises.
+        """
+        if not (self.cfg.get("toll_testnet") is True
+                and self.cfg.get("chain_id") == 84532):
+            raise RuntimeError(
+                "REFUSED: broadcast_toll_testnet requires the toll testnet "
+                "config (Base Sepolia 84532) — this adapter is not "
+                "testnet-toll-authorized")
+        assert_toll_testnet()  # re-asserts TOLL_TESTNET_SEPOLIA=1, logs LOUD
+        w3 = self._w3client()
+        self._check_chain_id()  # node must report 84532
+        raw = raw_tx_hex[2:] if raw_tx_hex.startswith("0x") else raw_tx_hex
+        tx_hash = w3.eth.send_raw_transaction(bytes.fromhex(raw))
+        return "0x" + tx_hash.hex()
+
+    def get_tx(self, tx_hash: str):
+        """eth_getTransactionByHash. Returns the tx dict, or None if the
+        node does not know this hash (never broadcast, or dropped).
+
+        Used by the toll crash-recovery path: a pending idempotency record
+        is reconciled against this before any re-broadcast, so a retry can
+        never build a second transaction for the same key.
+        """
+        try:
+            w3 = self._w3client()
+            self._check_chain_id()
+            h = tx_hash[2:] if tx_hash.startswith("0x") else tx_hash
+            return w3.eth.get_transaction("0x" + h)
+        except Exception:
+            return None
+
     # -- executor-facing convenience ------------------------------------
     def dryrun_transfer(self, seed: bytes, to_address: str,
                         base_units: int, token: str) -> dict:
@@ -334,6 +532,222 @@ class EvmAdapter:
             "broadcast": True,
             "explorer": "%s/tx/%s" % (self.cfg["explorer"], tx_hash),
         }
+
+
+# --------------------------------------------------------------------------
+# Toll settlement send path (Base mainnet USDC). The ONLY mainnet send in
+# awLPay. Enforces, in order: authorization, slot key, address shape,
+# per-tx cap, idempotency (no double-send on retry), daily cap, then
+# build + live-fill + sign + dedicated toll broadcast. Every outbound
+# transfer is appended to the toll ledger and logged LOUD.
+# --------------------------------------------------------------------------
+_toll_state_lock = threading.Lock()
+
+_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+
+def _toll_state_path(network: str = "mainnet") -> str:
+    env = "TOLL_TESTNET_STATE" if network == "sepolia" else "TOLL_STATE"
+    return os.environ.get(env, "").strip()
+
+
+def _toll_ledger_path(network: str = "mainnet") -> str:
+    env = "TOLL_TESTNET_LEDGER" if network == "sepolia" else "TOLL_LEDGER"
+    return os.environ.get(env, "").strip()
+
+
+def _toll_state_load(network: str = "mainnet") -> dict:
+    state: dict = {"consumed": {}, "daily": {}}
+    path = _toll_state_path(network)
+    if path:
+        try:
+            with open(path) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                if isinstance(loaded.get("consumed"), dict):
+                    state["consumed"] = loaded["consumed"]
+                if isinstance(loaded.get("daily"), dict):
+                    state["daily"] = loaded["daily"]
+        except (OSError, ValueError):
+            pass
+    return state
+
+
+def _toll_state_save(state: dict, network: str = "mainnet") -> None:
+    path = _toll_state_path(network)
+    if not path:
+        return
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _toll_ledger_append(entry: dict, network: str = "mainnet") -> None:
+    path = _toll_ledger_path(network)
+    if not path:
+        return
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def toll_send_usdc(slot: str, to_address: str, amount_uusdc: int,
+                   idempotency_key: str, network: str = "mainnet") -> dict:
+    """Send toll USDC from the toll `slot` wallet. Idempotent.
+
+    network="mainnet": real Base USDC (chain 8453), requires
+        TOLL_MAINNET_AUTHORIZED=1.
+    network="sepolia": Base Sepolia testnet USDC (chain 84532), requires
+        TOLL_TESTNET_SEPOLIA=1. Test funds only — the e2e path.
+    Anything else raises. The two networks use separate keys, wallets,
+    state files, and ledger files; they can never cross.
+
+    Returns {tx_hash, to, amount_uusdc, idempotent}. A repeated call with
+    the same idempotency_key returns the ORIGINAL tx_hash without
+    re-sending (idempotent=True). Raises on any refusal — never sends
+    when a check fails.
+    """
+    if network == "sepolia":
+        cfg = assert_toll_testnet()  # TOLL_TESTNET_SEPOLIA=1 or raise
+        rpc_env, seed_fn, broadcast_fn = (
+            "TOLL_RPC_SEPOLIA", get_toll_testnet_seed, "broadcast_toll_testnet")
+        chain_id = 84532
+        token = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        tag = "TESTNET"
+    elif network == "mainnet":
+        cfg = assert_toll_mainnet()  # TOLL_MAINNET_AUTHORIZED=1 or raise
+        rpc_env, seed_fn, broadcast_fn = (
+            "TOLL_RPC_BASE", get_toll_settle_seed, "broadcast_toll_mainnet")
+        chain_id = 8453
+        token = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        tag = "toll"
+    else:
+        raise ValueError("network must be 'mainnet' or 'sepolia'")
+    # No public RPC fallback on the money path: the operator must point
+    # the per-network RPC env at their own endpoint.
+    if not os.environ.get(rpc_env, "").strip():
+        raise RuntimeError("REFUSED: %s is not configured — "
+                           "the toll path takes no public fallback" % rpc_env)
+    seed = seed_fn(slot)  # raises unless the slot key is set
+    if not isinstance(to_address, str) or not _ADDR_RE.match(to_address or ""):
+        raise ValueError("bad to_address (want 0x + 40 hex)")
+    if not isinstance(amount_uusdc, int) or amount_uusdc <= 0:
+        raise ValueError("amount_uusdc must be a positive integer")
+    if amount_uusdc > TOLL_MAX_TX_UUSDC:
+        raise RuntimeError(
+            "REFUSED: amount %d exceeds per-tx cap %d micro-USDC"
+            % (amount_uusdc, TOLL_MAX_TX_UUSDC))
+    if (not isinstance(idempotency_key, str) or not idempotency_key.strip()
+            or len(idempotency_key) > 128):
+        raise ValueError("idempotency_key must be a non-empty string "
+                         "(<=128 chars)")
+
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%F")
+
+    def _entry(tx_hash, to_addr, amount):
+        return {"ts": datetime.datetime.now(
+                    datetime.timezone.utc).isoformat(),
+                "slot": slot, "to": to_addr, "amount_uusdc": amount,
+                "tx_hash": tx_hash, "idempotency_key": idempotency_key,
+                "chain_id": chain_id,
+                "token": token,
+                "network": network}
+
+    with _toll_state_lock:
+        state = _toll_state_load(network)
+        consumed = state["consumed"]
+        # Normalize legacy records (plain tx-hash strings) to the
+        # crash-safe record shape.
+        for k, v in list(consumed.items()):
+            if isinstance(v, str):
+                consumed[k] = {"status": "sent", "tx_hash": v}
+
+        adapter = EvmAdapter("base", cfg_override=cfg)
+        do_broadcast = getattr(adapter, broadcast_fn)
+
+        rec = consumed.get(idempotency_key)
+        if rec is not None and rec.get("status") == "sent":
+            return {"tx_hash": rec["tx_hash"],
+                    "to": to_address, "amount_uusdc": amount_uusdc,
+                    "idempotent": True}
+        if rec is not None:
+            # Crash-recovery: a previous attempt reserved this key and may
+            # or may not have broadcast. Reconcile against the chain before
+            # touching it again.
+            tx_hash = rec["tx_hash"]
+            if adapter.get_tx(tx_hash) is not None:
+                # It landed (mempool or mined) — adopt it, never re-send.
+                rec["status"] = "sent"
+                _toll_state_save(state, network)
+                _toll_ledger_append(
+                    _entry(tx_hash, rec["to"], rec["amount_uusdc"]), network)
+                print("LOUD: %s reconciled %s -> %s %d uusdc tx %s "
+                      "(already on chain)" % (tag, slot, rec["to"],
+                                              rec["amount_uusdc"], tx_hash),
+                      flush=True)
+                return {"tx_hash": tx_hash,
+                        "to": rec["to"], "amount_uusdc": rec["amount_uusdc"],
+                        "idempotent": True}
+            # Not on chain: re-broadcast the IDENTICAL signed bytes. Same
+            # bytes = same hash = the same transaction; the network can
+            # never treat it as a second transfer. We never build a fresh
+            # tx here, so a double-send is impossible by construction.
+            do_broadcast(rec["raw_tx"])
+            rec["status"] = "sent"
+            _toll_state_save(state, network)
+            _toll_ledger_append(
+                _entry(tx_hash, rec["to"], rec["amount_uusdc"]), network)
+            print("LOUD: %s re-broadcast %s -> %s %d uusdc tx %s "
+                  "(crash recovery, identical bytes)"
+                  % (tag, slot, rec["to"], rec["amount_uusdc"], tx_hash),
+                  flush=True)
+            return {"tx_hash": tx_hash,
+                    "to": rec["to"], "amount_uusdc": rec["amount_uusdc"],
+                    "idempotent": False}
+
+        day_total = int(state["daily"].get(today, 0))
+        if day_total + amount_uusdc > TOLL_MAX_DAILY_UUSDC:
+            raise RuntimeError(
+                "REFUSED: daily toll cap %d micro-USDC would be exceeded "
+                "(%d already sent today) %s" % (TOLL_MAX_DAILY_UUSDC, day_total, tag))
+
+        tx = adapter.fill_live(seed, adapter.build_transfer(
+            seed, to_address, amount_uusdc, "USDC"))
+        signed = adapter.sign(seed, tx)
+        # The tx hash is deterministic from the signed bytes — known BEFORE
+        # broadcast. Reserve the idempotency record DURABLY before the
+        # broadcast, so a crash at any point after this line reconciles
+        # against the chain instead of ever sending twice.
+        tx_hash = "0x" + signed["tx_hash"]
+        consumed[idempotency_key] = {
+            "status": "pending",
+            "tx_hash": tx_hash,
+            "raw_tx": signed["raw_tx"],
+            "slot": slot,
+            "to": to_address,
+            "amount_uusdc": amount_uusdc,
+            "nonce": tx.get("nonce"),
+            "day": today,
+        }
+        state["daily"][today] = day_total + amount_uusdc
+        _toll_state_save(state, network)
+
+        do_broadcast(signed["raw_tx"])
+
+        consumed[idempotency_key]["status"] = "sent"
+        _toll_state_save(state, network)
+
+    _toll_ledger_append(_entry(tx_hash, to_address, amount_uusdc), network)
+    print("LOUD: %s send %s -> %s %d uusdc tx %s"
+          % (tag, slot, to_address, amount_uusdc, tx_hash), flush=True)
+    return {"tx_hash": tx_hash, "to": to_address,
+            "amount_uusdc": amount_uusdc, "idempotent": False}
 
 
 # --------------------------------------------------------------------------

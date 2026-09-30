@@ -441,3 +441,279 @@ def test_settlement_mainnet_guard_still_first(monkeypatch):
             _quote(), {"volume_used_cents": 0, "txs_used": 0},
             signing_key=SigningKey.generate(), oracle=_oracle_usdc(),
             adapters={"base": _StubAdapter()})
+
+
+# --------------------------------------------------------------------------
+# Toll settlement send path (Base mainnet USDC) — unit tests with a fake
+# chain client. No test here ever touches a live network: _w3client is
+# stubbed, and the toll gate + caps + idempotency are exercised for real.
+# --------------------------------------------------------------------------
+
+_TOLL_SEED_HEX = "ab" * 32  # throwaway test key — never a real wallet
+_TOLL_TO = "0x" + "cd" * 20
+
+
+class _FakeEth:
+    def __init__(self):
+        self.chain_id = 8453
+        self.sent = []
+        self.known = {}  # tx_hash -> tx dict, as if seen on chain
+
+    def get_transaction_count(self, addr):
+        return 7
+
+    def get_transaction(self, h):
+        return self.known.get(h)
+
+    @property
+    def gas_price(self):
+        return 1_000_000_000
+
+    def send_raw_transaction(self, raw: bytes):
+        assert isinstance(raw, bytes) and len(raw) > 0
+        h = "0x%064x" % (0x70E1 + len(self.sent))
+        self.sent.append(bytes(raw))
+        return bytes.fromhex(h[2:])
+
+
+class _FakeW3:
+    def __init__(self):
+        self.eth = _FakeEth()
+
+
+@pytest.fixture()
+def toll_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("TOLL_MAINNET_AUTHORIZED", "1")
+    monkeypatch.setenv("TOLL_RPC_BASE", "http://127.0.0.1:9/")  # unused: stubbed
+    monkeypatch.setenv("TOLL_ESCROW_KEY", _TOLL_SEED_HEX)
+    monkeypatch.setenv("TOLL_BONDS_KEY", _TOLL_SEED_HEX)
+    monkeypatch.setenv("TOLL_STATE", str(tmp_path / "toll-state.json"))
+    monkeypatch.setenv("TOLL_LEDGER", str(tmp_path / "toll-ledger.jsonl"))
+    fake = _FakeW3()
+    monkeypatch.setattr(chains.EvmAdapter, "_w3client",
+                        lambda self: fake)
+    return fake
+
+
+def test_toll_send_happy_path(toll_env, tmp_path):
+    out = chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-1")
+    assert out["idempotent"] is False
+    assert out["tx_hash"].startswith("0x") and len(out["tx_hash"]) == 66
+    assert len(toll_env.eth.sent) == 1
+    # ledger line appended
+    lines = (tmp_path / "toll-ledger.jsonl").read_text().strip().split("\n")
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["slot"] == "escrow" and entry["amount_uusdc"] == 1_000_000
+    assert entry["tx_hash"] == out["tx_hash"] and entry["chain_id"] == 8453
+
+
+def test_toll_send_idempotent_retry(toll_env):
+    first = chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-dup")
+    second = chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-dup")
+    assert second["idempotent"] is True
+    assert second["tx_hash"] == first["tx_hash"]
+    assert len(toll_env.eth.sent) == 1  # no double-send
+
+
+def test_toll_send_per_tx_cap(toll_env, monkeypatch):
+    monkeypatch.setattr(chains, "TOLL_MAX_TX_UUSDC", 500_000)
+    with pytest.raises(RuntimeError, match="per-tx cap"):
+        chains.toll_send_usdc("escrow", _TOLL_TO, 500_001, "key-cap")
+    assert len(toll_env.eth.sent) == 0
+
+
+def test_toll_send_daily_cap(toll_env, monkeypatch):
+    monkeypatch.setattr(chains, "TOLL_MAX_DAILY_UUSDC", 1_500_000)
+    chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-d1")
+    with pytest.raises(RuntimeError, match="daily toll cap"):
+        chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-d2")
+    assert len(toll_env.eth.sent) == 1
+
+
+def test_toll_send_needs_authorization(toll_env, monkeypatch):
+    monkeypatch.setenv("TOLL_MAINNET_AUTHORIZED", "0")
+    with pytest.raises(RuntimeError, match="TOLL_MAINNET_AUTHORIZED"):
+        chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-noauth")
+    assert len(toll_env.eth.sent) == 0
+
+
+def test_toll_send_needs_rpc(toll_env, monkeypatch):
+    monkeypatch.delenv("TOLL_RPC_BASE")
+    with pytest.raises(RuntimeError, match="TOLL_RPC_BASE"):
+        chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-norpc")
+    assert len(toll_env.eth.sent) == 0
+
+
+def test_toll_broadcast_rejects_non_toll_adapter(toll_env):
+    adapter = chains.EvmAdapter("base")  # testnet config, no toll marker
+    with pytest.raises(RuntimeError, match="not toll-authorized"):
+        adapter.broadcast_toll_mainnet("0x" + "ab" * 32)
+    assert len(toll_env.eth.sent) == 0
+
+
+def test_generic_broadcast_still_refuses_mainnet_cfg(toll_env):
+    # Even handed the toll config, the GENERIC broadcast path must refuse:
+    # broadcast_allowed() never opens mainnet.
+    cfg = chains.assert_toll_mainnet()
+    adapter = chains.EvmAdapter("base", cfg_override=cfg)
+    with pytest.raises(RuntimeError):
+        adapter.broadcast("0x" + "ab" * 32)
+    assert len(toll_env.eth.sent) == 0
+
+
+# --------------------------------------------------------------------------
+# Toll TESTNET path (Base Sepolia 84532). Stubbed chain client; no live
+# network. Proves the sepolia/mainnet separation: separate flags, separate
+# configs, separate state — the two can never cross.
+# --------------------------------------------------------------------------
+
+class _FakeEthSepolia(_FakeEth):
+    def __init__(self):
+        super().__init__()
+        self.chain_id = 84532
+
+
+class _FakeW3Sepolia(_FakeW3):
+    def __init__(self):
+        self.eth = _FakeEthSepolia()
+
+
+@pytest.fixture()
+def testnet_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("TOLL_TESTNET_SEPOLIA", "1")
+    monkeypatch.setenv("TOLL_RPC_SEPOLIA", "http://127.0.0.1:9/")
+    monkeypatch.setenv("TOLL_TESTNET_ESCROW_KEY", "ab" * 32)
+    monkeypatch.setenv("TOLL_TESTNET_BONDS_KEY", "cd" * 32)
+    monkeypatch.setenv("TOLL_TESTNET_STATE", str(tmp_path / "tn-state.json"))
+    monkeypatch.setenv("TOLL_TESTNET_LEDGER",
+                       str(tmp_path / "tn-ledger.jsonl"))
+    # mainnet must stay OFF here: proves the testnet path doesn't need it
+    monkeypatch.setenv("TOLL_MAINNET_AUTHORIZED", "0")
+    fake = _FakeW3Sepolia()
+    monkeypatch.setattr(chains.EvmAdapter, "_w3client",
+                        lambda self: fake)
+    return fake
+
+
+def test_toll_testnet_send_happy_path(testnet_env, tmp_path):
+    out = chains.toll_send_usdc("escrow", _TOLL_TO, 500_000, "tn-key-1",
+                                network="sepolia")
+    assert out["idempotent"] is False
+    assert out["tx_hash"].startswith("0x")
+    assert len(testnet_env.eth.sent) == 1
+    lines = (tmp_path / "tn-ledger.jsonl").read_text().strip().split("\n")
+    entry = json.loads(lines[0])
+    assert entry["chain_id"] == 84532
+    assert entry["network"] == "sepolia"
+    assert entry["token"] == "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+
+
+def test_toll_testnet_needs_flag(testnet_env, monkeypatch):
+    monkeypatch.setenv("TOLL_TESTNET_SEPOLIA", "0")
+    with pytest.raises(RuntimeError, match="TOLL_TESTNET_SEPOLIA"):
+        chains.toll_send_usdc("escrow", _TOLL_TO, 500_000, "tn-noflag",
+                              network="sepolia")
+    assert len(testnet_env.eth.sent) == 0
+
+
+def test_toll_testnet_cross_refusal(testnet_env, monkeypatch):
+    # mainnet config must REFUSE the testnet broadcast, and vice versa.
+    monkeypatch.setenv("TOLL_MAINNET_AUTHORIZED", "1")
+    monkeypatch.setenv("TOLL_RPC_BASE", "http://127.0.0.1:9/")
+    monkeypatch.setenv("TOLL_ESCROW_KEY", "ab" * 32)
+    main_cfg = chains.assert_toll_mainnet()
+    test_cfg = chains.assert_toll_testnet()
+    main_adapter = chains.EvmAdapter("base", cfg_override=main_cfg)
+    test_adapter = chains.EvmAdapter("base", cfg_override=test_cfg)
+    with pytest.raises(RuntimeError, match="not testnet-toll-authorized"):
+        main_adapter.broadcast_toll_testnet("0x" + "ab" * 32)
+    with pytest.raises(RuntimeError, match="not toll-authorized"):
+        test_adapter.broadcast_toll_mainnet("0x" + "ab" * 32)
+    assert len(testnet_env.eth.sent) == 0
+
+
+def test_toll_testnet_state_isolation(testnet_env, tmp_path, monkeypatch):
+    # Same idempotency key on both networks: each sends once (separate
+    # state files), proving no cross-network replay or dedup.
+    out_tn = chains.toll_send_usdc("escrow", _TOLL_TO, 100_000, "shared-key",
+                                   network="sepolia")
+    assert out_tn["idempotent"] is False
+    # Now swap in the mainnet stub (chain 8453) with mainnet auth.
+    fake_mn = _FakeW3()
+    monkeypatch.setattr(chains.EvmAdapter, "_w3client",
+                        lambda self: fake_mn)
+    monkeypatch.setenv("TOLL_MAINNET_AUTHORIZED", "1")
+    monkeypatch.setenv("TOLL_RPC_BASE", "http://127.0.0.1:9/")
+    monkeypatch.setenv("TOLL_ESCROW_KEY", "ab" * 32)
+    monkeypatch.setenv("TOLL_STATE", str(tmp_path / "mn-state.json"))
+    monkeypatch.setenv("TOLL_LEDGER", str(tmp_path / "mn-ledger.jsonl"))
+    out_mn = chains.toll_send_usdc("escrow", _TOLL_TO, 100_000, "shared-key",
+                                   network="mainnet")
+    assert out_mn["idempotent"] is False
+    assert len(fake_mn.eth.sent) == 1
+    # Separate state files: the key is consumed once per network.
+    tn_state = json.loads((tmp_path / "tn-state.json").read_text())
+    mn_state = json.loads((tmp_path / "mn-state.json").read_text())
+    assert "shared-key" in tn_state["consumed"]
+    assert "shared-key" in mn_state["consumed"]
+
+
+# --------------------------------------------------------------------------
+# Crash-safe idempotency: the reserve-before-broadcast design.
+# A crash between the durable reserve and the broadcast must reconcile
+# against the chain on retry — never build a second transaction.
+# --------------------------------------------------------------------------
+
+def _write_pending_state(tmp_path, key, tx_hash, raw_tx, amount=1_000_000):
+    state_path = tmp_path / "toll-state.json"
+    state = {"consumed": {key: {
+        "status": "pending", "tx_hash": tx_hash, "raw_tx": raw_tx,
+        "slot": "escrow", "to": _TOLL_TO, "amount_uusdc": amount,
+        "nonce": 7, "day": "2026-09-29"}}, "daily": {}}
+    state_path.write_text(json.dumps(state))
+    return state_path
+
+
+def test_toll_send_crash_recovery_tx_landed(toll_env, tmp_path):
+    # Crash AFTER the durable reserve, tx DID land: retry must adopt it
+    # and never broadcast again.
+    tx_hash = "0x" + "ab" * 32
+    raw_tx = "02" + "cd" * 100
+    state_path = _write_pending_state(tmp_path, "key-crash-1", tx_hash, raw_tx)
+    toll_env.eth.known[tx_hash] = {"hash": tx_hash}  # node knows it: landed
+    out = chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-crash-1")
+    assert out["idempotent"] is True
+    assert out["tx_hash"] == tx_hash
+    assert len(toll_env.eth.sent) == 0  # never re-sent
+    state2 = json.loads(state_path.read_text())
+    assert state2["consumed"]["key-crash-1"]["status"] == "sent"
+
+
+def test_toll_send_crash_recovery_rebroadcast_identical(toll_env, tmp_path):
+    # Crash BEFORE broadcast: tx never hit the chain. Retry must
+    # re-broadcast the IDENTICAL bytes — never build a new tx, so a
+    # double-send is impossible by construction.
+    tx_hash = "0x" + "ef" * 32
+    raw_tx = "02" + "aa" * 100
+    state_path = _write_pending_state(tmp_path, "key-crash-2", tx_hash,
+                                      raw_tx, amount=2_000_000)
+    # node does NOT know the hash: never landed
+    out = chains.toll_send_usdc("escrow", _TOLL_TO, 2_000_000, "key-crash-2")
+    assert out["idempotent"] is False
+    assert out["tx_hash"] == tx_hash
+    assert len(toll_env.eth.sent) == 1
+    assert toll_env.eth.sent[0] == bytes.fromhex(raw_tx)  # identical bytes
+    state2 = json.loads(state_path.read_text())
+    assert state2["consumed"]["key-crash-2"]["status"] == "sent"
+
+
+def test_toll_send_legacy_string_record(toll_env, tmp_path):
+    # Pre-crash-safe records (plain tx-hash strings) still replay clean.
+    state_path = tmp_path / "toll-state.json"
+    state_path.write_text(json.dumps(
+        {"consumed": {"key-old": "0x" + "12" * 32}, "daily": {}}))
+    out = chains.toll_send_usdc("escrow", _TOLL_TO, 1_000_000, "key-old")
+    assert out["idempotent"] is True
+    assert out["tx_hash"] == "0x" + "12" * 32
+    assert len(toll_env.eth.sent) == 0

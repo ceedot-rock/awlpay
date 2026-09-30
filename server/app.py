@@ -105,6 +105,8 @@ from .logging import RequestLogMiddleware, PathNormalizeMiddleware, log_event
 from .oracle import PriceOracle, CoinGeckoOracle, default_mock_oracle
 from .router import ConverterRouter
 from .settlement import execute_quote
+from .toll import deposit_verify as toll_deposit_verify
+from .toll import toll_send as toll_send_ep
 
 VERSION = "1.0"
 PORT = int(os.environ.get("PORT", os.environ.get("AWL_PORT", "8899")))
@@ -521,6 +523,9 @@ app = Starlette(
         Route("/", index, methods=ALL_METHODS),
         Route("/api/pay/quote", quote, methods=ALL_METHODS),
         Route("/api/pay/execute", execute, methods=ALL_METHODS),
+        Route("/internal/toll/deposit/verify", toll_deposit_verify,
+              methods=ALL_METHODS),
+        Route("/internal/toll/send", toll_send_ep, methods=ALL_METHODS),
     ],
 )
 # Outermost first: normalize the path, then log the (normalized) request.
