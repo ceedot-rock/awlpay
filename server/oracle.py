@@ -50,6 +50,10 @@ _COINGECKO_IDS = {
     ("solana", "SOL"): "solana",
     ("solana", "USDC"): "usd-coin",
     ("xrpl", "XRP"): "ripple",
+    ("tron", "USDT"): "tether",
+    ("stellar", "XLM"): "stellar",
+    ("bitcoin", "BTC"): "bitcoin",
+    ("lightning", "BTC"): "bitcoin",
 }
 
 _COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
@@ -111,4 +115,8 @@ def default_mock_oracle() -> MockOracle:
     prices[("solana", "SOL")] = 150.0
     prices[("solana", "USDC")] = 1.0
     prices[("xrpl", "XRP")] = 2.0
+    prices[("tron", "USDT")] = 1.0
+    prices[("stellar", "XLM")] = 0.5
+    prices[("bitcoin", "BTC")] = 100000.0
+    prices[("lightning", "BTC")] = 100000.0
     return MockOracle(prices)

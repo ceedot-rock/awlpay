@@ -17,6 +17,10 @@ web3==8.0.0
 # RPC goes through stdlib urllib (see server/xrpl.py) — xrpl-py's httpx
 # client misparses this runtime's proxy env.
 xrpl-py==5.2.0
+# --- Lightning rail: BOLT11 invoice decode (server/lightning.py).
+# bolt11 is decode-only; invoice issuance goes through the ZBD Charges API
+# via stdlib urllib (no ZBD SDK dependency).
+bolt11==2.2.0
 # --- optional: ONLY needed for Solana rails / dryrun-broadcast ---
 # server/chains.py imports these lazily; mock mode and the test suite run
 # without them. Commented out for the Fly mock-mode deploy (keeps the

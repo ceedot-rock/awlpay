@@ -434,12 +434,15 @@ async def execute(request):
         # not burn the caller's payment.
         pay_to = (x402.sol_pay_to() if network == x402.SOLANA_NETWORK
                   else x402.xrpl_pay_to() if network in x402.XRPL_NETWORKS
+                  else x402.tron_pay_to() if network in x402.TRON_NETWORKS
+                  else x402.stellar_pay_to() if network in x402.STELLAR_NETWORKS
+                  else x402.btc_pay_to() if network in x402.BTC_NETWORKS
                   else x402.evm_pay_to())
         ok, info = await anyio.to_thread.run_sync(
             functools.partial(
                 x402.verify_payment,
                 proof, network,
-                EXECUTE_PRICE_CENTS * x402.UNITS_PER_CENT,
+                x402.min_units_for(network, EXECUTE_PRICE_CENTS),
                 pay_to, x402.used_set(),
                 rpc=x402.get_rpc(), payer_sig=payer_sig,
                 resource=resource, oracle=get_oracle()))

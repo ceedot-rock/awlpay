@@ -75,10 +75,15 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.request
 
 from . import ethsig
 from . import xrpl as xrplmod
+from . import tron as tronmod
+from . import stellar as stellarmod
+from . import lightning as lnmod
+from . import bitcoin as btcmod
 
 # --------------------------------------------------------------------------
 # constants (ported)
@@ -115,6 +120,26 @@ SOL_SIG_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{87,88}$")
 XRPL_TESTNET = xrplmod.XRPL_TESTNET
 XRPL_MAINNET = xrplmod.XRPL_MAINNET
 XRPL_NETWORKS = (XRPL_TESTNET, XRPL_MAINNET)
+
+# Tron rail: TRC-20 USDT (6 decimals, $1-pegged — priced like USDC).
+TRON_MAINNET = tronmod.TRON_MAINNET
+TRON_NILE = tronmod.TRON_NILE
+TRON_NETWORKS = (TRON_NILE, TRON_MAINNET)
+
+# Stellar rail: native XLM (7-decimal stroops).
+STELLAR_TESTNET = stellarmod.STELLAR_TESTNET
+STELLAR_PUBNET = stellarmod.STELLAR_PUBNET
+STELLAR_NETWORKS = (STELLAR_TESTNET, STELLAR_PUBNET)
+
+# Lightning rail: BOLT11 invoices via ZBD, preimage-proof verification.
+LIGHTNING_MAINNET = lnmod.LIGHTNING_MAINNET
+LIGHTNING_TESTNET = lnmod.LIGHTNING_TESTNET
+LIGHTNING_NETWORKS = (LIGHTNING_MAINNET, LIGHTNING_TESTNET)
+
+# Bitcoin rail: on-chain BTC (satoshis).
+BTC_MAINNET = btcmod.BTC_MAINNET
+BTC_SIGNET = btcmod.BTC_SIGNET
+BTC_NETWORKS = (BTC_SIGNET, BTC_MAINNET)
 
 # Multi-rail table: adding a rail = one entry here + its AWL_RPC_* env.
 # Solana is deliberately NOT in this table — it is not EVM and its
@@ -165,6 +190,18 @@ EVM_RAILS = {
         "usdc": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
         "testnet": False,
     },
+    "eip155:56": {
+        "label": "BNB Smart Chain",
+        "rpc_env": "AWL_RPC_BSC",
+        "fallback": ["https://bsc-dataseed.binance.org",
+                     "https://1rpc.io/bnb"],
+        "usdc_env": "AWL_USDC_BSC",
+        # USDT BEP-20 (18 decimals, not 6 — see "decimals" below).
+        "usdc": "0x55d398326f99059fF775485246999027B3197955",
+        "token": "USDT",
+        "decimals": 18,
+        "testnet": False,
+    },
 }
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
@@ -190,6 +227,33 @@ def rail_usdc(network: str) -> str:
     """Canonical USDC for a rail, or the AWL_USDC_* override."""
     rail = EVM_RAILS[network]
     return os.environ.get(rail["usdc_env"], "").strip() or rail["usdc"]
+
+
+def rail_token(network: str) -> str:
+    """Token symbol for user-facing messages (default USDC)."""
+    return EVM_RAILS[network].get("token", "USDC")
+
+
+def rail_decimals(network: str) -> int:
+    """Token decimals for a rail (default 6, e.g. BSC USDT uses 18)."""
+    return int(EVM_RAILS[network].get("decimals", USDC_DECIMALS))
+
+
+def units_per_cent_for(network: str) -> int:
+    """Base units per cent for a rail's token (10_000 for 6-decimal)."""
+    return 10 ** (rail_decimals(network) - 2)
+
+
+def min_units_for(network: str, price_cents: int) -> int:
+    """Minimum base-unit charge for a network.
+
+    EVM rails price in their own token's base units (USDC 6dp on most,
+    USDT 18dp on BSC). Solana SPL-USDC is 6dp. XRPL is handled separately
+    via drops (see xrpl_min_drops) — never call this for XRPL networks.
+    """
+    if network in EVM_RAILS:
+        return price_cents * units_per_cent_for(network)
+    return price_cents * UNITS_PER_CENT
 
 
 def sol_usdc_mint() -> str:
@@ -220,6 +284,91 @@ def xrpl_enabled() -> bool:
         xrpl_pay_to()))
 
 
+def tron_pay_to() -> str:
+    """Base58check T-address receiving USDT. Unset disables the Tron rail."""
+    return tronmod.tron_pay_to()
+
+
+def tron_enabled() -> bool:
+    return bool(tron_pay_to()) and bool(tronmod.valid_t_address(
+        tron_pay_to()))
+
+
+def stellar_pay_to() -> str:
+    """Stellar G-address receiving XLM. Unset disables the Stellar rail."""
+    return stellarmod.stellar_pay_to()
+
+
+def stellar_enabled() -> bool:
+    return bool(stellar_pay_to()) and bool(stellarmod.valid_g_address(
+        stellar_pay_to()))
+
+
+def lightning_enabled() -> bool:
+    """Lightning rail is live iff the ZBD API key is configured."""
+    return lnmod.lightning_enabled()
+
+
+def btc_pay_to() -> str:
+    """Bitcoin address receiving BTC. Unset disables the Bitcoin rail."""
+    return btcmod.btc_pay_to()
+
+
+def btc_enabled() -> bool:
+    addr = btc_pay_to()
+    return bool(addr) and (btcmod.valid_btc_address(addr, btcmod.BTC_MAINNET)
+                           or btcmod.valid_btc_address(addr, btcmod.BTC_SIGNET))
+
+
+# --------------------------------------------------------------------------
+# Lightning invoice registry (payment_hash -> invoice record).
+# --------------------------------------------------------------------------
+
+_ln_invoices: dict[str, dict] = {}
+_ln_invoices_lock = threading.Lock()
+_ln_invoice_by_amount: dict[int, str] = {}
+
+
+def _ln_prune_locked(now: float) -> None:
+    dead = [h for h, rec in _ln_invoices.items()
+            if rec["expires_at"] <= now]
+    for h in dead:
+        _ln_invoices.pop(h, None)
+        for amt, hh in list(_ln_invoice_by_amount.items()):
+            if hh == h:
+                _ln_invoice_by_amount.pop(amt, None)
+
+
+def ln_get_or_mint_invoice(amount_msats: int, description: str):
+    """Return (bolt11, payment_hash_hex, expires_at), reusing a live
+    invoice for the same amount when one exists."""
+    now = time.time()
+    with _ln_invoices_lock:
+        _ln_prune_locked(now)
+        h = _ln_invoice_by_amount.get(amount_msats)
+        if h and h in _ln_invoices:
+            rec = _ln_invoices[h]
+            return rec["bolt11"], h, rec["expires_at"]
+    bolt11, phash, expires_at = lnmod.create_invoice(
+        amount_msats, description)
+    if not bolt11:
+        return None, None, None
+    with _ln_invoices_lock:
+        _ln_invoices[phash] = {"bolt11": bolt11,
+                               "amount_msats": amount_msats,
+                               "expires_at": expires_at}
+        _ln_invoice_by_amount[amount_msats] = phash
+    return bolt11, phash, expires_at
+
+
+def ln_lookup_invoice(payment_hash_hex: str):
+    """Return the invoice record for a payment hash, or None."""
+    h = (payment_hash_hex or "").strip().lower()
+    with _ln_invoices_lock:
+        _ln_prune_locked(time.time())
+        return _ln_invoices.get(h)
+
+
 def configured_rails() -> list[tuple[str, dict]]:
     """Rails that can actually be verified right now (have RPC URLs)."""
     out = [(net, rail) for net, rail in EVM_RAILS.items()
@@ -232,6 +381,24 @@ def configured_rails() -> list[tuple[str, dict]]:
         if xrplmod.mainnet_urls():
             out.append((XRPL_MAINNET, {"label": "XRPL",
                                        "testnet": False}))
+    if tron_enabled():
+        out.append((TRON_NILE, {"label": "Tron Nile Testnet",
+                                "testnet": True}))
+        out.append((TRON_MAINNET, {"label": "Tron",
+                                   "testnet": False}))
+    if stellar_enabled():
+        out.append((STELLAR_TESTNET, {"label": "Stellar Testnet",
+                                      "testnet": True}))
+        out.append((STELLAR_PUBNET, {"label": "Stellar",
+                                     "testnet": False}))
+    if lightning_enabled():
+        out.append((LIGHTNING_MAINNET, {"label": "Lightning",
+                                        "testnet": False}))
+    if btc_enabled():
+        out.append((BTC_SIGNET, {"label": "Bitcoin Signet",
+                                 "testnet": True}))
+        out.append((BTC_MAINNET, {"label": "Bitcoin",
+                                  "testnet": False}))
     return out
 
 
@@ -528,7 +695,8 @@ def _verify_evm(tx_hash, network, rail, min_units, pay_to, used_set,
                                  "in one tx; pay from a single address"
                        % len(senders)}
     if not senders:
-        return False, {"reason": "no USDC transfer to %s in tx logs" % pay_to}
+        return False, {"reason": "no %s transfer to %s in tx logs"
+                                 % (rail_token(network), pay_to)}
     payer = next(iter(senders))
     if not payer_sig:
         return False, {"reason": "missing payerSig: bind the proof with an "
@@ -548,9 +716,11 @@ def _verify_evm(tx_hash, network, rail, min_units, pay_to, used_set,
                        "payer": payer}
     paid = _sum_usdc_to(receipt, pay_to, rail_usdc(network))
     if paid < min_units:
-        return False, {"reason": "underpaid: got %.6f USDC, need %.6f"
-                                 % (paid / 10 ** USDC_DECIMALS,
-                                    min_units / 10 ** USDC_DECIMALS),
+        dec = rail_decimals(network)
+        tok = rail_token(network)
+        return False, {"reason": "underpaid: got %.*f %s, need %.*f"
+                                 % (dec, paid / 10 ** dec, tok,
+                                    dec, min_units / 10 ** dec),
                        "paid_units": paid, "replay_key": key, "payer": payer}
     return True, {"paid_units": paid, "tx": h, "network": network,
                   "payer": payer, "replay_key": key}
@@ -645,22 +815,40 @@ def verify_payment(proof, network, min_units, pay_to, used_set, rpc=None,
     after the paid execution succeeds. On failure info carries "reason"
     (and "replay_key" when the proof itself was well-formed).
 
-    min_units is in the rail's native base unit for EVM/Solana (USDC
-    base units, 6 decimals). For XRPL it is converted to XRP drops via
-    the oracle (pass oracle=; without a price the XRPL rail refuses).
+    min_units is in the rail's native base unit for EVM/Solana/Tron (USDC/
+    USDT base units, 6 decimals). For XRPL/Stellar/Bitcoin/Lightning it is
+    converted to drops/stroops/sats/msats via the oracle (pass oracle=;
+    without a price the rail refuses).
     """
     if network == SOLANA_NETWORK:
         return _verify_solana(proof, min_units, pay_to, used_set, rpc)
     if network in XRPL_NETWORKS:
         return _verify_xrpl(proof, network, min_units, pay_to, used_set,
                             rpc=rpc, oracle=oracle)
+    if network in TRON_NETWORKS:
+        return _verify_tron(proof, network, min_units, pay_to, used_set,
+                            rpc=rpc, payer_sig=payer_sig, resource=resource)
+    if network in STELLAR_NETWORKS:
+        return _verify_stellar(proof, network, min_units, pay_to, used_set,
+                               rpc=rpc, oracle=oracle)
+    if network in LIGHTNING_NETWORKS:
+        return _verify_lightning(proof, network, min_units, pay_to,
+                                 used_set, oracle=oracle)
+    if network in BTC_NETWORKS:
+        return _verify_btc(proof, network, min_units, pay_to, used_set,
+                           rpc=rpc, payer_sig=payer_sig, resource=resource,
+                           oracle=oracle)
     rail = EVM_RAILS.get(network)
     if not rail:
         return False, {"reason": "unsupported network %r (supported: %s)"
                                  % (network,
                                     ", ".join(list(EVM_RAILS)
                                               + [SOLANA_NETWORK]
-                                              + list(XRPL_NETWORKS)))}
+                                              + list(XRPL_NETWORKS)
+                                              + list(TRON_NETWORKS)
+                                              + list(STELLAR_NETWORKS)
+                                              + list(LIGHTNING_NETWORKS)
+                                              + list(BTC_NETWORKS)))}
     return _verify_evm(proof, network, rail, min_units, pay_to, used_set,
                        rpc, payer_sig=payer_sig, resource=resource)
 
@@ -703,6 +891,158 @@ def _verify_xrpl(tx_hash, network, min_usdc_units, pay_to, used_set,
     if ok:
         info["paid_units"] = info.pop("paid_drops")
         info["asset"] = "XRP"
+    return ok, info
+
+
+# --------------------------------------------------------------------------
+# Tron verification (TRC-20 USDT, 6 decimals — priced like USDC)
+# --------------------------------------------------------------------------
+
+def _verify_tron(tx_hash, network, min_usdc_units, pay_to, used_set,
+                rpc=None, payer_sig=None, resource=None):
+    """Tron leg of verify_payment. USDT is 6-decimal and $1-pegged, so
+    min_usdc_units passes straight through (no oracle conversion).
+
+    The payerSig is a TIP-191 personal-message signature over the
+    binding message ("awlpay payment proof\\ntxHash: <txid>\\nresource: ...")
+    by the payer's Tron address, verified on-chain address recovery —
+    signature over the same binding_message text, stopping front-running
+    exactly like the EVM payerSig.
+    """
+    ok, info = tronmod.verify_tron_payment(
+        tx_hash, network, min_usdc_units, pay_to, used_set,
+        rpc=rpc, payer_sig=payer_sig, resource=resource or "")
+    if ok:
+        info["asset"] = "USDT"
+    return ok, info
+
+
+# --------------------------------------------------------------------------
+# Stellar verification (native XLM, stroops via the oracle)
+# --------------------------------------------------------------------------
+
+def stellar_min_stroops(min_usdc_units: int, oracle) -> int | None:
+    """Convert a USDC-base-unit price to XLM stroops via the oracle.
+
+    1 cent = 10_000 USDC base units. stroops = units / 1e6 ($) * 1e7
+    (stroops/XLM) / price = units * 10 / price. Integer math, never zero.
+    Returns None if XLM has no verifiable price (rail refuses).
+    """
+    try:
+        price = oracle.get_price_usd("stellar", "XLM") if oracle else None
+    except Exception:
+        price = None
+    if not isinstance(price, (int, float)) or price <= 0:
+        return None
+    stroops = int(min_usdc_units * 10 // price)
+    return max(stroops, 1)
+
+
+def _verify_stellar(tx_hash, network, min_usdc_units, pay_to, used_set,
+                    rpc=None, oracle=None):
+    """Stellar leg of verify_payment. min_usdc_units is converted to
+    stroops via the oracle; the memo-hash binding (not a payer signature)
+    stops front-running, like the XRPL InvoiceID."""
+    min_stroops = stellar_min_stroops(min_usdc_units, oracle)
+    if min_stroops is None:
+        return False, {"reason": "stellar rail: no verifiable XLM/USD price; "
+                                 "cannot price the charge"}
+    ok, info = stellarmod.verify_stellar_payment(
+        tx_hash, network, min_stroops, pay_to, used_set,
+        rpc=rpc)
+    if ok:
+        info["paid_units"] = info.pop("paid_stroops")
+        info["asset"] = "XLM"
+    return ok, info
+
+
+# --------------------------------------------------------------------------
+# Lightning verification (BOLT11, preimage proof)
+# --------------------------------------------------------------------------
+
+def lightning_min_msats(min_usdc_units: int, oracle) -> int | None:
+    """Convert a USDC-base-unit price to millisatoshis via the oracle BTC
+    price. 1 cent = 10_000 units. msats = units/1e6 * 1e11 / price
+    = units * 100_000 / price. Integer math, never zero. Returns None if
+    BTC has no verifiable price (rail refuses)."""
+    try:
+        price = oracle.get_price_usd("bitcoin", "BTC") if oracle else None
+    except Exception:
+        price = None
+    if not isinstance(price, (int, float)) or price <= 0:
+        return None
+    msats = int(min_usdc_units * 100_000 // price)
+    return max(msats, 1)
+
+
+def _verify_lightning(proof, network, min_usdc_units, pay_to,
+                      used_set, oracle=None):
+    """Lightning leg of verify_payment.
+
+    proof is the 64-hex preimage; the payment_hash comes from the
+    X-PAYMENT payload (parsed by parse_x_payment into proof context).
+    Here proof is (preimage_hex, payment_hash_hex) — see parse_x_payment.
+    The invoice record (amount, expiry) is looked up from the registry
+    populated by payment_terms.
+    """
+    if not isinstance(proof, (tuple, list)) or len(proof) != 2:
+        return False, {"reason": "lightning proof must be "
+                                 "(preimage, paymentHash)"}
+    preimage_hex, payment_hash_hex = proof
+    rec = ln_lookup_invoice(payment_hash_hex)
+    if rec is None:
+        return False, {"reason": "unknown or expired lightning invoice "
+                                 "(pay the BOLT11 from a fresh 402)"}
+    min_msats = lightning_min_msats(min_usdc_units, oracle)
+    if min_msats is None:
+        return False, {"reason": "lightning rail: no verifiable BTC/USD "
+                                 "price; cannot price the charge"}
+    ok, info = lnmod.verify_lightning_payment(
+        preimage_hex, payment_hash_hex, rec["amount_msats"], min_msats,
+        rec["expires_at"], used_set)
+    if ok:
+        info["paid_units"] = info.pop("amount_msats")
+        info["asset"] = "BTC"
+    return ok, info
+
+
+# --------------------------------------------------------------------------
+# Bitcoin verification (on-chain BTC, sats via the oracle)
+# --------------------------------------------------------------------------
+
+def btc_min_sats(min_usdc_units: int, oracle) -> int | None:
+    """Convert a USDC-base-unit price to satoshis via the oracle BTC price.
+
+    1 cent = 10_000 units. sats = units / 1e6 ($) * 1e8 (sats/BTC) / price
+    = units * 100 / price. Integer math, never zero. Returns None if BTC
+    has no verifiable price (rail refuses).
+    """
+    try:
+        price = oracle.get_price_usd("bitcoin", "BTC") if oracle else None
+    except Exception:
+        price = None
+    if not isinstance(price, (int, float)) or price <= 0:
+        return None
+    sats = int(min_usdc_units * 100 // price)
+    return max(sats, 1)
+
+
+def _verify_btc(tx_hash, network, min_usdc_units, pay_to, used_set,
+               rpc=None, payer_sig=None, resource=None, oracle=None):
+    """Bitcoin leg of verify_payment. min_usdc_units is converted to sats
+    via the oracle; the payerSig binding is a Bitcoin message signature
+    ("Bitcoin Signed Message") by one of the tx's input addresses,
+    stopping front-running like the EVM payerSig."""
+    min_sats = btc_min_sats(min_usdc_units, oracle)
+    if min_sats is None:
+        return False, {"reason": "bitcoin rail: no verifiable BTC/USD price; "
+                                 "cannot price the charge"}
+    ok, info = btcmod.verify_btc_payment(
+        tx_hash, network, min_sats, pay_to, used_set,
+        rpc=rpc, payer_sig=payer_sig, resource=resource or "")
+    if ok:
+        info["paid_units"] = info.pop("paid_sats")
+        info["asset"] = "BTC"
     return ok, info
 
 
@@ -770,10 +1110,75 @@ def parse_x_payment(header_value):
         # the Payment transaction (must equal extra.invoiceId from the
         # 402 body). A bare txHash is replayable otherwise.
         return txh, net, None, None
+    if net in TRON_NETWORKS:
+        if not tron_enabled():
+            return None, None, None, "Tron rail not enabled on this server"
+        txh = inner.get("txHash") or inner.get("tx_hash")
+        if not txh:
+            return None, None, None, "X-PAYMENT payload needs payload.txHash"
+        # TIP-191 payerSig (TronWeb signMessageV2) binds the proof to the
+        # payer, exactly like the EVM payerSig.
+        psig = inner.get("payerSig") or inner.get("payer_sig")
+        if not psig:
+            return None, None, None, (
+                "X-PAYMENT payload needs payload.payerSig: TIP-191 "
+                "personal-message signature by the paying Tron address "
+                "over \"awlpay payment proof\\ntxHash: <64-hex txid>\\n"
+                "resource: <the https URL you are calling>\" "
+                "(see the 402 body extra.howto). This stops anyone "
+                "replaying your txid ahead of you.")
+        return txh, net, psig, None
+    if net in STELLAR_NETWORKS:
+        if not stellar_enabled():
+            return None, None, None, "Stellar rail not enabled on this server"
+        txh = inner.get("txHash") or inner.get("tx_hash")
+        if not txh:
+            return None, None, None, "X-PAYMENT payload needs payload.txHash"
+        # No payerSig on Stellar: the push-mode binding is the memo hash on
+        # the payment (must equal extra.memoHash from the 402 body). A bare
+        # txHash is replayable otherwise.
+        return txh, net, None, None
+    if net in LIGHTNING_NETWORKS:
+        if not lightning_enabled():
+            return None, None, None, "Lightning rail not enabled on this server"
+        preimage = inner.get("preimage")
+        phash = inner.get("paymentHash") or inner.get("payment_hash")
+        if not preimage or not phash:
+            return None, None, None, (
+                "X-PAYMENT payload needs payload.preimage and "
+                "payload.paymentHash: pay the BOLT11 invoice from the 402 "
+                "body, then submit the 32-byte preimage (64 hex) your "
+                "wallet reveals on settlement.")
+        # Proof is the (preimage, paymentHash) pair; _verify_lightning
+        # checks SHA256(preimage) == paymentHash against the registry.
+        return (preimage, phash), net, None, None
+    if net in BTC_NETWORKS:
+        if not btc_enabled():
+            return None, None, None, "Bitcoin rail not enabled on this server"
+        txh = inner.get("txHash") or inner.get("tx_hash")
+        if not txh:
+            return None, None, None, "X-PAYMENT payload needs payload.txHash"
+        # Bitcoin message-signature payerSig binds the proof to one of the
+        # tx's input addresses, exactly like the EVM payerSig.
+        psig = inner.get("payerSig") or inner.get("payer_sig")
+        if not psig:
+            return None, None, None, (
+                "X-PAYMENT payload needs payload.payerSig: Bitcoin message "
+                "signature (\"Bitcoin Signed Message\") by one of the "
+                "paying transaction's input addresses over "
+                "\"awlpay payment proof\\ntxHash: <64-hex lowercase>\\n"
+                "resource: <the https URL you are calling>\" "
+                "(see the 402 body extra.howto). This stops anyone "
+                "replaying your txid ahead of you.")
+        return txh, net, psig, None
     return None, None, None, ("unsupported network %r (supported: %s)"
                               % (net, ", ".join(list(EVM_RAILS)
                                                 + [SOLANA_NETWORK]
-                                                + list(XRPL_NETWORKS))))
+                                                + list(XRPL_NETWORKS)
+                                                + list(TRON_NETWORKS)
+                                                + list(STELLAR_NETWORKS)
+                                                + list(LIGHTNING_NETWORKS)
+                                                + list(BTC_NETWORKS))))
 
 
 # --------------------------------------------------------------------------
@@ -781,8 +1186,9 @@ def parse_x_payment(header_value):
 # --------------------------------------------------------------------------
 
 def _evm_howto(price_cents, rail, network, pay_to, resource):
-    units = price_cents * UNITS_PER_CENT
-    return ("1) transfer >= %d USDC base units (%d cents) of native USDC on "
+    units = price_cents * units_per_cent_for(network)
+    tok = rail.get("token", "USDC")
+    return ("1) transfer >= %d %s base units (%d cents) of native %s on "
             "%s to %s  "
             "2) sign this EXACT text with the paying address "
             "(EIP-191 personal_sign, e.g. ethers signMessage / "
@@ -796,10 +1202,10 @@ def _evm_howto(price_cents, rail, network, pay_to, resource):
             "\"payload\":{\"txHash\":\"0x...\",\"payerSig\":\"0x...\"}})). "
             "The payerSig binds the proof to you so nobody can "
             "front-run your txHash. Sign with the address that sent the "
-            "USDC (for ERC-4337 smart accounts that is the token sender, "
+            "%s (for ERC-4337 smart accounts that is the token sender, "
             "not the bundler); contract wallets verify via ERC-1271."
-            % (units, price_cents, rail["label"], pay_to, resource,
-               json.dumps(network)))
+            % (units, tok, price_cents, tok, rail["label"], pay_to, resource,
+               json.dumps(network), tok))
 
 
 def payment_terms(host: str, price_cents: int, reason: str | None = None,
@@ -872,16 +1278,178 @@ def payment_terms(host: str, price_cents: int, reason: str | None = None,
                 },
             })
             continue
+        if network in TRON_NETWORKS:
+            tron_to = tron_pay_to()
+            usdt_contract = tronmod.usdt_contract_for(network)
+            tlabel = ("Tron Nile testnet" if network == TRON_NILE
+                      else "Tron")
+            accepts.append({
+                "scheme": PAY_SCHEME,
+                "network": network,
+                "amount": str(units),
+                "asset": usdt_contract,
+                "payTo": tron_to,
+                "resource": resource,
+                "description": ("awLPay v1 /api/pay/execute — %d cents in "
+                                "USDT (%d base units) on %s per execution"
+                                % (price_cents, units, tlabel)),
+                "mimeType": "application/json",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                    "paymentProof": "txHash",
+                    "howto": ("1) transfer >= %d USDT base units (%d cents) "
+                              "TRC-20 USDT to %s on %s  "
+                              "2) sign this EXACT text with the paying "
+                              "address (TIP-191, TronWeb signMessageV2 / "
+                              "TronLink):\n"
+                              "awlpay payment proof\\n"
+                              "txHash: <64-hex txid>\\n"
+                              "resource: %s  "
+                              "3) retry with header X-PAYMENT: "
+                              "base64url(JSON({\"x402Version\":2,"
+                              "\"scheme\":\"exact\",\"network\":%s,"
+                              "\"payload\":{\"txHash\":\"<64-hex>\","
+                              "\"payerSig\":\"<hex>\"}})). "
+                              "The payerSig binds the proof to you so nobody "
+                              "can front-run your txid."
+                              % (units, price_cents, tron_to, tlabel,
+                                 resource, json.dumps(network))),
+                },
+            })
+            continue
+        if network in STELLAR_NETWORKS:
+            xlm_pay_to = stellar_pay_to()
+            stroops = (stellar_min_stroops(units, oracle)
+                       if oracle else None)
+            if stroops is None:
+                continue  # no XLM price -> rail stays unadvertised
+            mid = stellarmod.memo_id(xlm_pay_to, str(stroops), network)
+            memo_b64 = base64.b64encode(bytes.fromhex(mid)).decode()
+            tlabel = ("Stellar testnet" if network == STELLAR_TESTNET
+                      else "Stellar")
+            accepts.append({
+                "scheme": PAY_SCHEME,
+                "network": network,
+                "amount": str(stroops),
+                "asset": "XLM",
+                "payTo": xlm_pay_to,
+                "resource": resource,
+                "description": ("awLPay v1 /api/pay/execute — %d cents in "
+                                "XLM (%d stroops) on %s per execution"
+                                % (price_cents, stroops, tlabel)),
+                "mimeType": "application/json",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                    "paymentProof": "txHash",
+                    "memoHash": memo_b64,
+                    "howto": ("1) send a payment of >= %d stroops XLM to %s "
+                              "on %s with a HASH memo of %s  "
+                              "2) retry with header X-PAYMENT: "
+                              "base64url(JSON({\"x402Version\":2,"
+                              "\"scheme\":\"exact\",\"network\":%s,"
+                              "\"payload\":{\"txHash\":\"<64-hex>\"}})). "
+                              "The memo hash binds the payment to this "
+                              "challenge so nobody can front-run your tx "
+                              "hash."
+                              % (stroops, xlm_pay_to, tlabel, memo_b64,
+                                 json.dumps(network))),
+                },
+            })
+            continue
+        if network in LIGHTNING_NETWORKS:
+            msats = (lightning_min_msats(units, oracle)
+                     if oracle else None)
+            if msats is None:
+                continue  # no BTC price -> rail stays unadvertised
+            bolt11, phash, expires_at = ln_get_or_mint_invoice(
+                msats, "awLPay execute")
+            if not bolt11:
+                continue  # ZBD unreachable/key missing -> skip quietly
+            accepts.append({
+                "scheme": PAY_SCHEME,
+                "network": network,
+                "amount": str(msats),
+                "asset": "BTC",
+                "payTo": bolt11,
+                "resource": resource,
+                "description": ("awLPay v1 /api/pay/execute — %d cents in "
+                                "BTC (%d msats) over Lightning per execution"
+                                % (price_cents, msats)),
+                "mimeType": "application/json",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                    "paymentProof": "preimage",
+                    "invoice": bolt11,
+                    "paymentHash": phash,
+                    "howto": ("1) pay this BOLT11 invoice (%d msats) with "
+                              "any Lightning wallet  "
+                              "2) take the 32-byte preimage your wallet "
+                              "reveals on settlement and retry with header "
+                              "X-PAYMENT: base64url(JSON({\"x402Version\":2,"
+                              "\"scheme\":\"exact\",\"network\":%s,"
+                              "\"payload\":{\"preimage\":\"<64-hex>\","
+                              "\"paymentHash\":%s}})). "
+                              "The preimage cryptographically proves you "
+                              "paid; it cannot be replayed."
+                              % (msats, json.dumps(network),
+                                 json.dumps(phash))),
+                },
+            })
+            continue
+        if network in BTC_NETWORKS:
+            btc_to = btc_pay_to()
+            sats = (btc_min_sats(units, oracle)
+                    if oracle else None)
+            if sats is None:
+                continue  # no BTC price -> rail stays unadvertised
+            tlabel = ("Bitcoin signet" if network == BTC_SIGNET
+                      else "Bitcoin")
+            accepts.append({
+                "scheme": PAY_SCHEME,
+                "network": network,
+                "amount": str(sats),
+                "asset": "BTC",
+                "payTo": btc_to,
+                "resource": resource,
+                "description": ("awLPay v1 /api/pay/execute — %d cents in "
+                                "BTC (%d sats) on %s per execution"
+                                % (price_cents, sats, tlabel)),
+                "mimeType": "application/json",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                    "paymentProof": "txHash",
+                    "howto": ("1) send >= %d sats BTC to %s on %s  "
+                              "2) sign this EXACT text with one of the "
+                              "paying transaction's input addresses "
+                              "(Bitcoin message signature):\n"
+                              "awlpay payment proof\\n"
+                              "txHash: <64-hex txid, lowercase>\\n"
+                              "resource: %s  "
+                              "3) retry with header X-PAYMENT: "
+                              "base64url(JSON({\"x402Version\":2,"
+                              "\"scheme\":\"exact\",\"network\":%s,"
+                              "\"payload\":{\"txHash\":\"<64-hex>\","
+                              "\"payerSig\":\"<base64>\"}})). "
+                              "The payerSig binds the proof to you so nobody "
+                              "can front-run your txid. 0-conf accepted "
+                              "with RBF screen; 1 confirmation settles."
+                              % (sats, btc_to, tlabel,
+                                 resource, json.dumps(network))),
+                },
+            })
+            continue
+        evm_units = price_cents * units_per_cent_for(network)
         accepts.append({
             "scheme": PAY_SCHEME,
             "network": network,
-            "amount": str(units),
+            "amount": str(evm_units),
             "asset": rail_usdc(network),
             "payTo": pay_to,
             "resource": resource,
             "description": ("awLPay v1 /api/pay/execute — %d cents native "
-                            "USDC on %s per execution (route price)"
-                            % (price_cents, rail["label"])),
+                            "%s on %s per execution (route price)"
+                            % (price_cents, rail_token(network),
+                               rail["label"])),
             "mimeType": "application/json",
             "maxTimeoutSeconds": 300,
             "extra": {
