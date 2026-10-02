@@ -56,6 +56,7 @@ XRPL_TESTNET = "xrpl:1"
 DROPS_PER_XRP = 1_000_000
 
 TESTNET_RPC_DEFAULT = ["https://s.altnet.rippletest.net:51234"]
+MAINNET_RPC_DEFAULT = ["https://s1.ripple.com:51234", "https://s2.ripple.com:51234"]
 
 # Classic r-address: r + 25-34 base58 chars (no 0, O, I, l).
 R_ADDRESS_RE = re.compile(r"^r[1-9A-HJ-NP-Za-km-z]{25,34}$")
@@ -85,6 +86,20 @@ def xrpl_rpcs() -> list[str]:
     urls = [u.strip() for u in os.environ.get("AWL_RPC_XRPL", "").split(",")
             if u.strip()]
     return urls or list(TESTNET_RPC_DEFAULT)
+
+
+def mainnet_urls() -> list[str]:
+    """Mainnet RPC endpoints. Returns [] unless the operator sets
+    AWL_RPC_XRPL_MAINNET — mainnet verification stays off without it."""
+    urls = [u.strip() for u in os.environ.get("AWL_RPC_XRPL_MAINNET", "").split(",")
+            if u.strip()]
+    return urls or list(MAINNET_RPC_DEFAULT)
+
+
+def rpc_urls_for(network: str) -> list[str]:
+    if network == XRPL_MAINNET:
+        return mainnet_urls()
+    return xrpl_rpcs()
 
 
 def invoice_salt() -> str:
@@ -256,15 +271,15 @@ def verify_xrpl_payment(tx_hash: str, network: str, min_drops: int,
     rpc: optional (method, params) -> result callable (tests).
     """
     h = (tx_hash or "").strip().upper()
-    if network == XRPL_MAINNET:
-        return _clean_fail("xrpl mainnet not enabled on this server "
-                           "(testnet only: xrpl:1)")
-    if network != XRPL_TESTNET:
+    if network not in (XRPL_MAINNET, XRPL_TESTNET):
         return _clean_fail("unsupported network %r (xrpl rail takes "
-                           "xrpl:1 testnet)" % (network,))
+                           "xrpl:0 mainnet or xrpl:1 testnet)" % (network,))
+    if network == XRPL_MAINNET and not mainnet_urls():
+        return _clean_fail("xrpl mainnet not configured on this server "
+                           "(set AWL_RPC_XRPL_MAINNET)")
     if not valid_tx_hash(h):
         return _clean_fail("bad tx hash format (want 64 hex chars)")
-    key = "xrpl:1:" + h.lower()
+    key = network + ":" + h.lower()
     if key in used_set:
         return _clean_fail("replay: payment already used", replay_key=key)
     if not valid_r_address(pay_to):
@@ -281,7 +296,7 @@ def verify_xrpl_payment(tx_hash: str, network: str, min_drops: int,
         if rpc is not None:
             result = rpc("tx", {"transaction": h})
         else:
-            result = fetch_transaction(h)
+            result = fetch_transaction(h, urls=rpc_urls_for(network))
     except Exception as e:  # noqa: BLE001 - surfaced as clean failure
         return _clean_fail("xrpl rpc unreachable: %s" % str(e)[:120],
                            replay_key=key)

@@ -109,9 +109,9 @@ SOLANA_NETWORK = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
 SOL_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # 6 decimals
 SOL_SIG_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{87,88}$")
 
-# XRPL rail (CAIP-2). v1 = XRP-native on testnet only; the verifier
-# hard-refuses xrpl:0 (mainnet) until a deliberate code change + Corey's
-# approval. RLUSD/IOU assets are refused by the verifier (v2).
+# XRPL rail (CAIP-2). v1 = XRP-native; testnet always on, mainnet gated on
+# AWL_RPC_XRPL_MAINNET being set. RLUSD/IOU assets are refused by the
+# verifier (v2).
 XRPL_TESTNET = xrplmod.XRPL_TESTNET
 XRPL_MAINNET = xrplmod.XRPL_MAINNET
 XRPL_NETWORKS = (XRPL_TESTNET, XRPL_MAINNET)
@@ -229,6 +229,9 @@ def configured_rails() -> list[tuple[str, dict]]:
     if xrpl_enabled():
         out.append((XRPL_TESTNET, {"label": "XRPL Testnet",
                                    "testnet": True}))
+        if xrplmod.mainnet_urls():
+            out.append((XRPL_MAINNET, {"label": "XRPL",
+                                       "testnet": False}))
     return out
 
 

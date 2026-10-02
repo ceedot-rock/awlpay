@@ -119,9 +119,14 @@ def test_happy_path():
     assert info["ledger_index"] == 21224500
 
 
-def test_rejects_mainnet():
-    ok, info = _verify(_tx_result(), network="xrpl:0")
-    assert not ok and "mainnet" in info["reason"].lower()
+def test_mainnet_verifies_when_configured():
+    # Mainnet flip: xrpl:0 verifies like testnet when the operator has
+    # mainnet RPCs (defaults exist). Replay keys stay network-scoped.
+    result = _tx_result(**{"InvoiceID": xrplmod.invoice_id(
+        PAY_TO, str(MIN_DROPS), "xrpl:0", SALT)})
+    ok, info = _verify(result, network="xrpl:0")
+    assert ok, info
+    assert info["replay_key"].startswith("xrpl:0:")
 
 
 def test_rejects_bad_hash():
