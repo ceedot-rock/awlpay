@@ -100,6 +100,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import x402
+from . import facilitator as fac
 from .chamber import load_relayer_keys
 from .fees import calculate_fees, FREE, PRO, L33T, ROUTE_PRICE_CENTS
 from .logging import RequestLogMiddleware, PathNormalizeMiddleware, log_event
@@ -367,6 +368,68 @@ async def healthz(request):
     return JSONResponse({"ok": True, "version": VERSION, "mode": MODE})
 
 
+# --------------------------------------------------------------------------
+# x402 facilitator endpoints (push-payment verification as a service)
+# --------------------------------------------------------------------------
+
+# Shared replay store for facilitator /settle (consumed keys).
+_facilitator_used: set = set()
+_facilitator_lock = threading.Lock()
+
+
+async def f_supported(request):
+    if request.method != "GET":
+        return _method_404(request, "GET")
+    return JSONResponse(fac.supported_response())
+
+
+async def f_verify(request):
+    if request.method != "POST":
+        return _method_404(request, "POST")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"isValid": False,
+                             "invalidReason": "invalid_payload"},
+                            status_code=400)
+    result = await anyio.to_thread.run_sync(
+        functools.partial(fac.facilitator_verify, body,
+                          oracle=get_oracle(),
+                          used_set=set()))
+    status = 200 if result.get("isValid") else 402
+    return JSONResponse(result, status_code=status)
+
+
+async def f_settle(request):
+    if request.method != "POST":
+        return _method_404(request, "POST")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "transaction": "",
+                             "network": "",
+                             "errorReason": "invalid_payload"},
+                            status_code=400)
+    with _facilitator_lock:
+        store = set(_facilitator_used)
+    result = await anyio.to_thread.run_sync(
+        functools.partial(fac.facilitator_settle, body,
+                          oracle=get_oracle(),
+                          used_set=store))
+    if result.get("success"):
+        with _facilitator_lock:
+            _facilitator_used.update(store)
+    status = 200 if result.get("success") else 402
+    return JSONResponse(result, status_code=status)
+
+
+async def f_wellknown(request):
+    if request.method != "GET":
+        return _method_404(request, "GET")
+    host = request.headers.get("host", "localhost").split(":")[0]
+    return JSONResponse(fac.discovery_manifest(host))
+
+
 async def index(request):
     if request.method != "GET":
         return _method_404(request, "GET")
@@ -529,6 +592,10 @@ app = Starlette(
         Route("/", index, methods=ALL_METHODS),
         Route("/api/pay/quote", quote, methods=ALL_METHODS),
         Route("/api/pay/execute", execute, methods=ALL_METHODS),
+        Route("/supported", f_supported, methods=ALL_METHODS),
+        Route("/verify", f_verify, methods=ALL_METHODS),
+        Route("/settle", f_settle, methods=ALL_METHODS),
+        Route("/.well-known/x402", f_wellknown, methods=ALL_METHODS),
         Route("/internal/toll/deposit/verify", toll_deposit_verify,
               methods=ALL_METHODS),
         Route("/internal/toll/send", toll_send_ep, methods=ALL_METHODS),
