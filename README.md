@@ -1,3 +1,53 @@
+# AwLPay
+
+**Live: https://awlpay.fly.dev** — the payment product with no allowlist.
+Any chain, any token — if it has verifiable value, it pays.
+
+AwLPay is the money rail for agents. Quote a conversion for free
+(`POST /api/pay/quote`), execute behind a 1¢ x402 payment gate
+(`POST /api/pay/execute`), and every execution carries an Ed25519-signed
+receipt attesting to the exact law that ran. When the math doesn't work it
+refuses with a reason — never a bad rate.
+
+**The server is the product.** `server/` is a Python (Starlette) service that
+is live in production, has moved real USDC through its toll engine, and
+earned real toll revenue. Everything else in this repo is tooling around it.
+
+## What's in this repo
+
+| Path | What it is | Status |
+|------|-----------|--------|
+| `server/` | **The product.** Python ASGI server: quote, x402-gated execute, toll engine, ChainRelay settlement, Chamber attestation, PWA | **Live** at awlpay.fly.dev |
+| `spec/` | CuNi law: FeeManager, SettlementEngine, Profile + machine-verified fixtures | Law |
+| `tests/` | 86 Python tests (fees, oracle, router, chamber, settlement, x402, chains, cross-check) | Green |
+| `sdk/` | TypeScript client SDK | Client tooling — see note below |
+| `mcp/` | MCP server for agent wallets | Client tooling — see note below |
+| `exact/` | CuNi specs + bank receipts (fee-tier verification corpus) | Reference |
+| `brand/` | Logos, lockups, icons, OG images | Assets |
+| `docs/` | Product docs pack | Reference |
+| `openapi.yaml` | API description | **Stale** — see note below |
+| `fly.toml`, `Dockerfile`, `deploy-fly.py`, `create-machine.py` | Production deploy | Live infra |
+
+### Client-tooling notes (read before using)
+
+- **`sdk/`** targets `/v1/*` routes from an earlier TypeScript prototype. The
+  live server speaks `/api/pay/quote` and `/api/pay/execute`. The SDK needs a
+  route remap before it works against production — the fee math and types are
+  good, the endpoints are not.
+- **`mcp/`** defaults to `https://api.awlpay.com`; point `AWLPAY_BASE_URL` at
+  `https://awlpay.fly.dev` and use the `/api/pay/*` routes.
+- **`openapi.yaml`** describes the old TypeScript server's `/v1/*` surface,
+  not the live Python server. Kept for reference; a fresh spec for
+  `/api/pay/*` is TODO.
+
+## Fee tiers (locked 2026-09-27)
+
+Free: 1.0% + $0.25/tx. Pro: $39/mo, $0 under $30k volume / 500 txs. L33t:
+$799/mo unlimited. All integer cents, machine-verified against the CuNi law
+in `spec/`.
+
+---
+
 # awLPay v1
 
 ## What AwLPay is
@@ -411,4 +461,19 @@ awlpay/
     test_crosscheck.py     23 cross-check tests (fixtures, cuni check, receipt round-trip)
     test_x402.py           17 real-402 payment tests (1c-wired ASGI port: mock chain, replay/binding/underpaid 402s, live read-only testnet check)
     test_chains.py         22 real-settlement tests (adapters, executor, modes)
+```
+
+### Grafted client tooling (from the TypeScript branch)
+
+```
+  sdk/                     TypeScript client SDK (client, fees, router types)
+                           NOTE: targets /v1/* prototype routes — needs remap
+                           to /api/pay/* before use against the live server
+  mcp/                     MCP server (agent wallets) — set AWLPAY_BASE_URL to
+                           https://awlpay.fly.dev
+  brand/                   logos, lockups, app icons, favicons, OG images
+  exact/                   CuNi fee-tier specs + bank receipts (verification corpus)
+  docs/                    product docs pack (README-pack, android, any-asset, ...)
+  openapi.yaml             STALE: describes the old /v1/* TS surface, not live
+  .github/workflows/ci.yml runs Python tests + SDK tests + tsc on every push
 ```

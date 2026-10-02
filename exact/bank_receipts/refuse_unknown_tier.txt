@@ -1,0 +1,5 @@
+# bank run 2026-09-27T13:04:31-0400  source=exact/fixtures/refuse_unknown_tier.cuni
+bank: PASS — from=cuni to=py out=emit.py source_hash=e98cdb6d6ff43665
+bank: PASS — from=cuni to=go out=emit.go source_hash=e98cdb6d6ff43665
+bank: PASS — from=cuni to=js out=emit.js source_hash=e98cdb6d6ff43665
+bank: PASS — from=cuni to=sol out=emit.sol source_hash=e98cdb6d6ff43665
