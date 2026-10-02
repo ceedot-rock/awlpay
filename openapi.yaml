@@ -1,12 +1,16 @@
 openapi: 3.0.3
 info:
-  title: AwLPay Wallets API
+  title: AwLPay API
   version: 1.0.0
   description: |
-    Local/mock SettlementEngine first cut. No live chain rails.
-    POST /v1/wallets/{id}/credit is DEV-ONLY mock funding.
+    Live AwLPay surface (https://awlpay.fly.dev). Integer cents everywhere.
+    POST /api/pay/quote is FREE. POST /api/pay/execute is 402-gated: the
+    caller proves the route-price payment with an x402 X-PAYMENT header;
+    without it the server answers 402 with PaymentRequirements.
+servers:
+  - url: https://awlpay.fly.dev
 paths:
-  /healthz:
+  /health:
     get:
       summary: Liveness
       responses:
@@ -16,207 +20,206 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok]
+                required: [ok, mode]
                 properties:
                   ok: { type: boolean }
-  /v1/wallets:
-    post:
-      summary: Create wallet
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [owner_id]
-              properties:
-                owner_id: { type: string }
-                chain: { type: string, enum: [solana, base, ethereum], default: solana }
-      responses:
-        '200':
-          description: Wallet created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Wallet'
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-  /v1/wallets/{id}/balance:
+                  mode: { type: string }
+  /healthz:
     get:
-      summary: Get balance
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
+      summary: Liveness with version (Fly check target)
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Balance'
-        '404':
-          description: Wallet not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-  /v1/wallets/{id}/credit:
-    post:
-      summary: DEV-ONLY mock credit (funding for local tests)
-      description: Mock-only. Not available in production. CoS gates public deploy.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [amount_cents]
-              properties:
-                amount_cents: { type: integer, minimum: 1 }
+                type: object
+                required: [ok, version, mode]
+                properties:
+                  ok: { type: boolean }
+                  version: { type: string }
+                  mode: { type: string }
+  /:
+    get:
+      summary: Service info, endpoints, tiers
       responses:
         '200':
-          description: Credited
+          description: OK
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  id: { type: string }
-                  balance_cents: { type: integer }
-                  mock: { type: boolean }
-                  note: { type: string }
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Wallet not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-  /v1/quote:
+                  service: { type: string }
+                  version: { type: string }
+                  mode: { type: string }
+                  endpoints: { type: array, items: { type: string } }
+                  tiers: { type: object }
+  /api/pay/quote:
     post:
-      summary: Get fee quote
+      summary: Priced conversion quote (FREE)
+      description: |
+        Returns the conversion path and the fee law for ALL three tiers,
+        or {refused: true, reason} when the law says no (unknown token,
+        no path, dust eaten by fees, negative amount).
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [amount_cents]
-              properties:
-                amount_cents: { type: integer }
-                tier: { type: string, enum: [free, pro, l33t], default: free }
-                volume_month_usd_cents: { type: integer }
-                txs_month: { type: integer }
+              $ref: '#/components/schemas/QuoteRequest'
       responses:
         '200':
-          description: OK
+          description: Quote or honest refusal
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Quote'
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-  /v1/settle:
+                oneOf:
+                  - $ref: '#/components/schemas/QuoteOk'
+                  - $ref: '#/components/schemas/QuoteRefused'
+  /api/pay/execute:
     post:
-      summary: Settle payment (mock in-memory)
+      summary: Execute a quoted conversion (402-gated)
+      description: |
+        Same body as /api/pay/quote, plus the x402 X-PAYMENT header proving
+        the route-price payment. Without a valid payment the server answers
+        402 with PaymentRequirements. On success returns a signed
+        attestation envelope over the receipt.
+      parameters:
+        - name: X-PAYMENT
+          in: header
+          required: true
+          description: x402 payment proof for the route price
+          schema: { type: string }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [from_wallet, to_wallet, amount_cents]
-              properties:
-                from_wallet: { type: string }
-                to_wallet: { type: string }
-                amount_cents: { type: integer }
-                tier: { type: string, enum: [free, pro, l33t], default: free }
-                volume_month_usd_cents: { type: integer }
-                txs_month: { type: integer }
+              $ref: '#/components/schemas/QuoteRequest'
       responses:
         '200':
-          description: Settled
+          description: Executed (signed receipt) or honest refusal
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SettlementReceipt'
-        '400':
-          description: Refused
+                oneOf:
+                  - $ref: '#/components/schemas/ExecuteOk'
+                  - $ref: '#/components/schemas/QuoteRefused'
+        '402':
+          description: Payment required (x402 PaymentRequirements)
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Replay conflict (idempotency key or payment reused)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /internal/toll/deposit/verify:
+    post:
+      summary: Internal — toll deposit verification
+      description: Internal toll-keeper endpoint, not part of the public API.
+      responses:
+        '200': { description: OK }
+  /internal/toll/send:
+    post:
+      summary: Internal — toll send
+      description: Internal toll-keeper endpoint, not part of the public API.
+      responses:
+        '200': { description: OK }
 components:
   schemas:
-    Wallet:
+    QuoteRequest:
       type: object
-      required: [id, owner_id, chain, balance_cents, created_at]
+      required: [from_chain, from_token, to_chain, to_token, amount_cents]
       properties:
-        id: { type: string, format: uuid }
-        owner_id: { type: string }
-        chain: { type: string, enum: [solana, base, ethereum] }
-        balance_cents: { type: integer }
-        created_at: { type: string, format: date-time }
-    Balance:
+        from_chain: { type: string, description: 'e.g. base', example: base }
+        from_token: { type: string, description: 'e.g. USDC', example: USDC }
+        to_chain: { type: string, example: solana }
+        to_token: { type: string, example: USDC }
+        amount_cents: { type: integer, minimum: 0 }
+        tier:
+          type: integer
+          enum: [0, 1, 2]
+          default: 0
+          description: 0=free (1.0% + 25c), 1=pro, 2=l33t
+        volume_used_cents: { type: integer, minimum: 0, default: 0 }
+        txs_used: { type: integer, minimum: 0, default: 0 }
+        idempotency_key: { type: string }
+        to_address: { type: string }
+    PathStep:
       type: object
-      required: [id, balance_cents]
+      required: [chain, token, hop]
       properties:
-        id: { type: string }
-        balance_cents: { type: integer }
-    Quote:
+        chain: { type: string }
+        token: { type: string }
+        hop: { type: string, enum: [origin, bridge, swap] }
+    TierFees:
       type: object
-      required: [amount_cents, platform_fee_cents, trading_fee_cents, total_debit_cents, tier_applied]
+      required: [fee_cents, status, net_cents]
       properties:
+        fee_cents: { type: integer }
+        status:
+          type: string
+          description: free | pro_under_cap | pro_overage | l33t | l33t_fair_use_review
+        net_cents: { type: integer }
+    QuoteOk:
+      type: object
+      required: [path, fees, tier, net_cents, amount_cents]
+      properties:
+        path: { type: array, items: { $ref: '#/components/schemas/PathStep' } }
+        fees:
+          type: object
+          properties:
+            free: { $ref: '#/components/schemas/TierFees' }
+            pro: { $ref: '#/components/schemas/TierFees' }
+            l33t: { $ref: '#/components/schemas/TierFees' }
+        tier: { type: string, enum: [free, pro, l33t] }
+        net_cents: { type: integer }
         amount_cents: { type: integer }
-        platform_fee_cents: { type: integer }
-        trading_fee_cents: { type: integer }
-        total_debit_cents: { type: integer }
-        tier_applied: { type: string }
-    SettlementReceipt:
+    QuoteRefused:
       type: object
-      required:
-        - settlement_id
-        - from
-        - to
-        - amount_cents
-        - platform_fee_cents
-        - trading_fee_cents
-        - tier_applied
-        - status
-        - created_at
+      required: [refused, reason]
       properties:
-        settlement_id: { type: string, format: uuid }
-        from: { type: string }
-        to: { type: string }
-        amount_cents: { type: integer }
-        platform_fee_cents: { type: integer }
-        trading_fee_cents: { type: integer }
-        tier_applied: { type: string }
-        status: { type: string, enum: [settled] }
-        created_at: { type: string, format: date-time }
+        refused: { type: boolean, enum: [true] }
+        reason:
+          type: string
+          description: >
+            refused_negative_amount | unknown_token_no_price |
+            no_conversion_path | dust_eaten_by_fees | bad_request
+        detail: { type: string }
+        fees:
+          type: object
+          description: Present on dust_eaten_by_fees refusals
+    ExecuteOk:
+      type: object
+      required: [ok, charged_cents, route_price_cents, attestation, payment]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        charged_cents: { type: integer }
+        route_price_cents: { type: integer }
+        attestation:
+          type: object
+          required: [alg, kid, payload, sig]
+          properties:
+            alg: { type: string }
+            kid: { type: string }
+            payload: { type: string }
+            sig: { type: string }
+        payment:
+          type: object
+          properties:
+            via: { type: string, enum: [x402, local-dev] }
+            network: { type: string }
+            tx: { type: string }
+            payer: { type: string }
+            paid_units: { type: integer }
+            verified: { type: boolean }
     Error:
       type: object
-      required: [error, reason]
+      required: [error]
       properties:
         error: { type: string }
-        reason: { type: string }

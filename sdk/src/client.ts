@@ -1,68 +1,129 @@
 import type { Tier } from './fees.js';
-import type { Asset } from './router.js';
 
 export interface AwLPayConfig {
-  apiKey: string;
+  /** Live default: https://awlpay.fly.dev */
   baseUrl?: string;
 }
 
+/** Tier names the SDK accepts; the wire uses the server's integer ids. */
+export const TIER_IDS: Record<Tier, 0 | 1 | 2> = { free: 0, pro: 1, l33t: 2 };
+
+export interface QuoteParams {
+  fromChain: string;
+  fromToken: string;
+  toChain: string;
+  toToken: string;
+  amountCents: number;
+  tier?: Tier;
+  volumeUsedCents?: number;
+  txsUsed?: number;
+  idempotencyKey?: string;
+  toAddress?: string;
+}
+
+export interface PathStep {
+  chain: string;
+  token: string;
+  hop: 'origin' | 'bridge' | 'swap';
+}
+
+export interface TierFees {
+  fee_cents: number;
+  status: string;
+  net_cents: number;
+}
+
+export interface QuoteOk {
+  path: PathStep[];
+  fees: Record<Tier, TierFees>;
+  tier: Tier;
+  net_cents: number;
+  amount_cents: number;
+}
+
+export interface QuoteRefused {
+  refused: true;
+  reason: string;
+  detail?: string;
+  fees?: Record<Tier, TierFees>;
+}
+
+export type QuoteResponse = QuoteOk | QuoteRefused;
+
+export interface ExecuteOk {
+  ok: true;
+  charged_cents: number;
+  route_price_cents: number;
+  attestation: { alg: string; kid: string; payload: string; sig: string };
+  payment: {
+    via: 'x402' | 'local-dev';
+    network?: string;
+    tx?: string;
+    payer?: string;
+    paid_units?: number;
+    verified?: boolean;
+  };
+  [k: string]: unknown;
+}
+
+export type ExecuteResponse = ExecuteOk | QuoteRefused | { error: string };
+
+function toWireBody(p: QuoteParams): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    from_chain: p.fromChain,
+    from_token: p.fromToken,
+    to_chain: p.toChain,
+    to_token: p.toToken,
+    amount_cents: p.amountCents,
+    tier: TIER_IDS[p.tier ?? 'free'],
+  };
+  if (p.volumeUsedCents !== undefined) body.volume_used_cents = p.volumeUsedCents;
+  if (p.txsUsed !== undefined) body.txs_used = p.txsUsed;
+  if (p.idempotencyKey !== undefined) body.idempotency_key = p.idempotencyKey;
+  if (p.toAddress !== undefined) body.to_address = p.toAddress;
+  return body;
+}
+
 export class AwLPay {
-  constructor(private cfg: AwLPayConfig) {}
+  private base: string;
+
+  constructor(private cfg: AwLPayConfig = {}) {
+    this.base = cfg.baseUrl ?? 'https://awlpay.fly.dev';
+  }
 
   private async req(path: string, opts: RequestInit = {}) {
-    const res = await fetch(`${this.cfg.baseUrl ?? 'https://awlpay.fly.dev'}${path}`, {
+    const res = await fetch(`${this.base}${path}`, {
       ...opts,
-      headers: {
-        Authorization: `Bearer ${this.cfg.apiKey}`,
-        'Content-Type': 'application/json',
-        ...(opts.headers || {}),
-      },
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
     });
     return res.json();
   }
 
-  wallets = {
-    create: (
-      owner_id: string,
-      chain: 'solana' | 'base' | 'ethereum' = 'solana',
-      accepted_asset: Asset = 'USD',
-    ) =>
-      this.req('/v1/wallets', {
-        method: 'POST',
-        body: JSON.stringify({ owner_id, chain, accepted_asset }),
-      }),
-    balance: (id: string) => this.req(`/v1/wallets/${id}/balance`),
-    accept: (id: string, asset: Asset) =>
-      this.req(`/v1/wallets/${id}/accepted`, {
-        method: 'POST',
-        body: JSON.stringify({ asset }),
-      }),
-  };
+  /** GET /health — liveness. */
+  health = () => this.req('/health');
 
-  quote = (amount_cents: number, tier: Tier) =>
-    this.req('/v1/quote', { method: 'POST', body: JSON.stringify({ amount_cents, tier }) });
+  /** GET /healthz — liveness with version (Fly check target). */
+  healthz = () => this.req('/healthz');
 
-  quoteAny = (pay_asset: Asset, pay_amount_minor: number, accepted_asset: Asset, tier: Tier = 'free') =>
-    this.req('/v1/quote', {
+  /** GET / — service info, endpoints, tiers. */
+  info = () => this.req('/');
+
+  /**
+   * POST /api/pay/quote (FREE) — priced conversion path + all-tier fees.
+   * Returns QuoteOk, or { refused: true, reason } when the law says no.
+   */
+  quote = (p: QuoteParams): Promise<QuoteResponse> =>
+    this.req('/api/pay/quote', { method: 'POST', body: JSON.stringify(toWireBody(p)) });
+
+  /**
+   * POST /api/pay/execute (402-GATED) — same body as quote, plus the
+   * x402 X-PAYMENT header proving the route-price payment. Without a valid
+   * payment the server answers 402 with PaymentRequirements.
+   */
+  execute = (p: QuoteParams, xPayment: string): Promise<ExecuteResponse> =>
+    this.req('/api/pay/execute', {
       method: 'POST',
-      body: JSON.stringify({ pay_asset, pay_amount_minor, accepted_asset, tier }),
-    });
-
-  settle = (from_wallet: string, to_wallet: string, amount_cents: number, tier: Tier = 'free') =>
-    this.req('/v1/settle', {
-      method: 'POST',
-      body: JSON.stringify({ from_wallet, to_wallet, amount_cents, tier }),
-    });
-
-  settleAny = (
-    from_wallet: string,
-    to_wallet: string,
-    pay_asset: Asset,
-    pay_amount_minor: number,
-    tier: Tier = 'free',
-  ) =>
-    this.req('/v1/settle', {
-      method: 'POST',
-      body: JSON.stringify({ from_wallet, to_wallet, pay_asset, pay_amount_minor, tier }),
+      headers: { 'X-PAYMENT': xPayment },
+      body: JSON.stringify(toWireBody(p)),
     });
 }

@@ -1,7 +1,7 @@
 {
   "name": "@awlpay/sdk",
   "version": "0.1.0",
-  "description": "AwLPay Wallets TypeScript SDK — fees mirror CuNi FeeManager",
+  "description": "AwLPay TypeScript SDK — client for the live /api/pay routes; fees mirror CuNi FeeManager",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
