@@ -78,6 +78,7 @@ import threading
 import urllib.request
 
 from . import ethsig
+from . import xrpl as xrplmod
 
 # --------------------------------------------------------------------------
 # constants (ported)
@@ -107,6 +108,13 @@ BASE_SEPOLIA = "eip155:84532"
 SOLANA_NETWORK = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
 SOL_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # 6 decimals
 SOL_SIG_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{87,88}$")
+
+# XRPL rail (CAIP-2). v1 = XRP-native on testnet only; the verifier
+# hard-refuses xrpl:0 (mainnet) until a deliberate code change + Corey's
+# approval. RLUSD/IOU assets are refused by the verifier (v2).
+XRPL_TESTNET = xrplmod.XRPL_TESTNET
+XRPL_MAINNET = xrplmod.XRPL_MAINNET
+XRPL_NETWORKS = (XRPL_TESTNET, XRPL_MAINNET)
 
 # Multi-rail table: adding a rail = one entry here + its AWL_RPC_* env.
 # Solana is deliberately NOT in this table — it is not EVM and its
@@ -202,12 +210,25 @@ def solana_rpcs() -> list[str]:
     return urls or ["https://solana-rpc.publicnode.com"]
 
 
+def xrpl_pay_to() -> str:
+    """Classic r-address receiving XRP. Unset disables the XRPL rail."""
+    return xrplmod.xrpl_pay_to()
+
+
+def xrpl_enabled() -> bool:
+    return bool(xrpl_pay_to()) and bool(xrplmod.valid_r_address(
+        xrpl_pay_to()))
+
+
 def configured_rails() -> list[tuple[str, dict]]:
     """Rails that can actually be verified right now (have RPC URLs)."""
     out = [(net, rail) for net, rail in EVM_RAILS.items()
            if rail_rpcs(net)]
     if sol_pay_to():
         out.append((SOLANA_NETWORK, {"label": "Solana", "testnet": False}))
+    if xrpl_enabled():
+        out.append((XRPL_TESTNET, {"label": "XRPL Testnet",
+                                   "testnet": True}))
     return out
 
 
@@ -613,24 +634,73 @@ def _verify_solana(sig, min_units, pay_to, used_set, rpc=None):
 
 
 def verify_payment(proof, network, min_units, pay_to, used_set, rpc=None,
-                   payer_sig=None, resource=None):
+                   payer_sig=None, resource=None, oracle=None):
     """Verify a payment proof. Returns (ok, info).
 
     READ-ONLY: never mutates used_set. On success info carries
     "replay_key" — the caller consumes it via mark_payment_used() only
     after the paid execution succeeds. On failure info carries "reason"
     (and "replay_key" when the proof itself was well-formed).
+
+    min_units is in the rail's native base unit for EVM/Solana (USDC
+    base units, 6 decimals). For XRPL it is converted to XRP drops via
+    the oracle (pass oracle=; without a price the XRPL rail refuses).
     """
     if network == SOLANA_NETWORK:
         return _verify_solana(proof, min_units, pay_to, used_set, rpc)
+    if network in XRPL_NETWORKS:
+        return _verify_xrpl(proof, network, min_units, pay_to, used_set,
+                            rpc=rpc, oracle=oracle)
     rail = EVM_RAILS.get(network)
     if not rail:
         return False, {"reason": "unsupported network %r (supported: %s)"
                                  % (network,
                                     ", ".join(list(EVM_RAILS)
-                                              + [SOLANA_NETWORK]))}
+                                              + [SOLANA_NETWORK]
+                                              + list(XRPL_NETWORKS)))}
     return _verify_evm(proof, network, rail, min_units, pay_to, used_set,
                        rpc, payer_sig=payer_sig, resource=resource)
+
+
+# --------------------------------------------------------------------------
+# XRPL verification (XRP-native, testnet only in v1)
+# --------------------------------------------------------------------------
+
+def xrpl_min_drops(min_usdc_units: int, oracle) -> int | None:
+    """Convert a USDC-base-unit price to XRP drops via the oracle.
+
+    1 cent = 10_000 USDC base units. Returns integer drops, or None if
+    XRP has no verifiable price (then the rail refuses — never guesses).
+    """
+    try:
+        price = oracle.get_price_usd("xrpl", "XRP") if oracle else None
+    except Exception:
+        price = None
+    if not isinstance(price, (int, float)) or price <= 0:
+        return None
+    # min_usdc_units (1e6/unit=$1) -> USD -> XRP -> drops, integer math.
+    # drops = units / 1e6 ($) * 1e6 (drops/XRP) / price = units / price.
+    drops = int(min_usdc_units // price)
+    # Never quote zero: a sub-drop price still costs 1 drop.
+    return max(drops, 1)
+
+
+def _verify_xrpl(tx_hash, network, min_usdc_units, pay_to, used_set,
+                 rpc=None, oracle=None):
+    """XRPL leg of verify_payment. min_usdc_units is converted to drops
+    via the oracle; the InvoiceID binding (not a payer signature) stops
+    front-running, per the push-mode design."""
+    min_drops = xrpl_min_drops(min_usdc_units, oracle)
+    if min_drops is None:
+        return False, {"reason": "xrpl rail: no verifiable XRP/USD price; "
+                                 "cannot price the charge"}
+    ok, info = xrplmod.verify_xrpl_payment(
+        tx_hash, network, min_drops, pay_to, used_set,
+        rpc=rpc)
+    if ok:
+        info["paid_units"] = info.pop("paid_drops")
+        info["asset"] = "XRP"
+    return ok, info
 
 
 # --------------------------------------------------------------------------
@@ -687,9 +757,20 @@ def parse_x_payment(header_value):
         if not sig:
             return None, None, None, "X-PAYMENT payload needs payload.signature"
         return sig, net, None, None
+    if net in XRPL_NETWORKS:
+        if not xrpl_enabled():
+            return None, None, None, "XRPL rail not enabled on this server"
+        txh = inner.get("txHash") or inner.get("tx_hash")
+        if not txh:
+            return None, None, None, "X-PAYMENT payload needs payload.txHash"
+        # No payerSig on XRPL: the push-mode binding is the InvoiceID on
+        # the Payment transaction (must equal extra.invoiceId from the
+        # 402 body). A bare txHash is replayable otherwise.
+        return txh, net, None, None
     return None, None, None, ("unsupported network %r (supported: %s)"
                               % (net, ", ".join(list(EVM_RAILS)
-                                                + [SOLANA_NETWORK])))
+                                                + [SOLANA_NETWORK]
+                                                + list(XRPL_NETWORKS))))
 
 
 # --------------------------------------------------------------------------
@@ -718,7 +799,8 @@ def _evm_howto(price_cents, rail, network, pay_to, resource):
                json.dumps(network)))
 
 
-def payment_terms(host: str, price_cents: int, reason: str | None = None) -> dict:
+def payment_terms(host: str, price_cents: int, reason: str | None = None,
+                  oracle=None) -> dict:
     """Machine-readable 402 body: x402 PaymentRequirements listing every
     rail that can actually be verified right now."""
     units = price_cents * UNITS_PER_CENT
@@ -748,6 +830,42 @@ def payment_terms(host: str, price_cents: int, reason: str | None = None) -> dic
                               "\"payload\":{\"signature\":\"<base58>\"}}))"
                               % (units, sol_pay_to(),
                                  json.dumps(SOLANA_NETWORK))),
+                },
+            })
+            continue
+        if network in XRPL_NETWORKS:
+            xrp_pay_to = xrpl_pay_to()
+            drops = (xrpl_min_drops(units, oracle)
+                     if oracle else None)
+            if drops is None:
+                continue  # no XRP price -> rail stays unadvertised
+            inv = xrplmod.invoice_id(xrp_pay_to, str(drops), network)
+            accepts.append({
+                "scheme": PAY_SCHEME,
+                "network": network,
+                "amount": str(drops),
+                "asset": "XRP",
+                "payTo": xrp_pay_to,
+                "resource": resource,
+                "description": ("awLPay v1 /api/pay/execute — %d cents in "
+                                "XRP (%d drops) on XRPL testnet per "
+                                "execution" % (price_cents, drops)),
+                "mimeType": "application/json",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                    "paymentProof": "txHash",
+                    "invoiceId": inv,
+                    "howto": ("1) send a Payment of >= %d drops XRP to %s "
+                              "on the XRPL testnet with InvoiceID=%s  "
+                              "2) retry with header X-PAYMENT: "
+                              "base64url(JSON({\"x402Version\":2,"
+                              "\"scheme\":\"exact\",\"network\":%s,"
+                              "\"payload\":{\"txHash\":\"<64-hex, no 0x>\"}})). "
+                              "The InvoiceID binds the payment to this "
+                              "challenge so nobody can front-run your tx "
+                              "hash. Testnet only."
+                              % (drops, xrp_pay_to, inv,
+                                 json.dumps(network))),
                 },
             })
             continue

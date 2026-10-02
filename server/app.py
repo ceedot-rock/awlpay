@@ -177,7 +177,8 @@ def _local_dev_payment(headers) -> bool:
 
 
 def _402(host: str, reason: str | None = None) -> tuple[int, dict, dict]:
-    return (402, x402.payment_terms(host, EXECUTE_PRICE_CENTS, reason=reason),
+    return (402, x402.payment_terms(host, EXECUTE_PRICE_CENTS,
+                                    reason=reason, oracle=get_oracle()),
             {"PAYMENT-REQUIRED": "1"})
 
 
@@ -432,6 +433,7 @@ async def execute(request):
         # quote validates (below), so a bad body or a refused quote does
         # not burn the caller's payment.
         pay_to = (x402.sol_pay_to() if network == x402.SOLANA_NETWORK
+                  else x402.xrpl_pay_to() if network in x402.XRPL_NETWORKS
                   else x402.evm_pay_to())
         ok, info = await anyio.to_thread.run_sync(
             functools.partial(
@@ -440,7 +442,7 @@ async def execute(request):
                 EXECUTE_PRICE_CENTS * x402.UNITS_PER_CENT,
                 pay_to, x402.used_set(),
                 rpc=x402.get_rpc(), payer_sig=payer_sig,
-                resource=resource))
+                resource=resource, oracle=get_oracle()))
         if not ok:
             reason = info.get("reason", "payment not verified")
             if reason.startswith("replay:"):

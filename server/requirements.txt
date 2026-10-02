@@ -13,6 +13,10 @@ typing-extensions==4.16.0
 # and any EVM payment verification that broadcasts. Was wrongly marked
 # dryrun-only; the 2026-10-01 mainnet smoke proved sends need it live.
 web3==8.0.0
+# --- XRPL rail: address validation, drops math, offline tx construction.
+# RPC goes through stdlib urllib (see server/xrpl.py) — xrpl-py's httpx
+# client misparses this runtime's proxy env.
+xrpl-py==5.2.0
 # --- optional: ONLY needed for Solana rails / dryrun-broadcast ---
 # server/chains.py imports these lazily; mock mode and the test suite run
 # without them. Commented out for the Fly mock-mode deploy (keeps the
