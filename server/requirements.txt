@@ -9,9 +9,12 @@ click==8.5.0
 h11==0.16.0
 idna==3.20
 typing-extensions==4.16.0
-# --- optional: ONLY needed for AWL_EXECUTION_MODE=dryrun/broadcast ---
+# --- EVM chain support: REQUIRED for the toll send path (chains.py EvmAdapter)
+# and any EVM payment verification that broadcasts. Was wrongly marked
+# dryrun-only; the 2026-10-01 mainnet smoke proved sends need it live.
+web3==8.0.0
+# --- optional: ONLY needed for Solana rails / dryrun-broadcast ---
 # server/chains.py imports these lazily; mock mode and the test suite run
 # without them. Commented out for the Fly mock-mode deploy (keeps the
 # 256MB boot light); uncomment + reinstall to enable dryrun/broadcast.
-# web3
 # solders

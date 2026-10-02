@@ -11,6 +11,7 @@ can plug in later without touching the pathfinding.
 
 Nodes are (chain, token) pairs. Edges carry a "hop" type:
     "bridge" — same token across chains (cross-chain bridge)
+    "ccip"   — same token across chains via the Chainlink CCIP 2.0 rail
     "swap"   — different tokens on the same chain (DEX-style swap)
 Pathfinding is plain BFS over the legal subgraph (all tokens priced).
 """
@@ -38,6 +39,18 @@ USDC_BRIDGES = [
     ("base", "arbitrum"),
     ("polygon", "arbitrum"),
     ("ethereum", "solana"),
+]
+
+# Chainlink CCIP 2.0 rail (added 2026-09-29, Corey's call): same-token
+# cross-chain hops for pairs the generic bridge table doesn't cover.
+# CCIP 2.0 keeps the 16-operator committee by default and lets issuers
+# add a custom Cross-Chain Verifier to co-sign select transfers, with
+# configurable speeds and built-in KYC/AML/sanctions screening — the
+# closest plug-in candidate for this router's cross-chain path.
+CCIP_BRIDGES = [
+    ("base", "solana"),
+    ("polygon", "solana"),
+    ("arbitrum", "solana"),
 ]
 
 # Same-chain swap hops: (chain, token_a, token_b). ETH<->USDC on every EVM
@@ -78,6 +91,11 @@ def _build_graph() -> dict[tuple[str, str], list[dict]]:
         if node(a, "USDC") in graph and node(b, "USDC") in graph:
             add_edge(node(a, "USDC"), node(b, "USDC"), "bridge")
             add_edge(node(b, "USDC"), node(a, "USDC"), "bridge")
+
+    for a, b in CCIP_BRIDGES:
+        if node(a, "USDC") in graph and node(b, "USDC") in graph:
+            add_edge(node(a, "USDC"), node(b, "USDC"), "ccip")
+            add_edge(node(b, "USDC"), node(a, "USDC"), "ccip")
 
     for chain, ta, tb in SWAPS:
         na, nb = node(chain, ta), node(chain, tb)

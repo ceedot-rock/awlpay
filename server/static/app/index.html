@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>AwLPay</title>
+<link rel="manifest" href="/app/manifest.json">
+<link rel="icon" href="/app/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/app/icons/icon-192.png">
+<link rel="stylesheet" href="/app/style.css">
+</head>
+<body>
+<header>
+  <img src="/app/icons/icon-192.png" alt="AwLPay" class="logo">
+  <div>
+    <h1>AwLPay</h1>
+    <p class="tag">pay anything · any chain · any token with value</p>
+  </div>
+  <span id="live-dot" class="dot" title="service status"></span>
+</header>
+
+<nav>
+  <button data-tab="quote" class="active">Quote</button>
+  <button data-tab="pay">Pay</button>
+</nav>
+
+<main>
+  <!-- QUOTE -->
+  <section id="tab-quote" class="tab active">
+    <label>Amount (USD)
+      <input id="q-amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="10.00">
+    </label>
+    <div class="row">
+      <label>From
+        <select id="q-from-chain">
+          <option value="base">Base</option>
+          <option value="ethereum">Ethereum</option>
+          <option value="polygon">Polygon</option>
+          <option value="arbitrum">Arbitrum</option>
+          <option value="optimism">Optimism</option>
+          <option value="solana">Solana</option>
+        </select>
+      </label>
+      <label>To
+        <select id="q-to-chain">
+          <option value="base">Base</option>
+          <option value="ethereum">Ethereum</option>
+          <option value="polygon">Polygon</option>
+          <option value="arbitrum">Arbitrum</option>
+          <option value="optimism">Optimism</option>
+          <option value="solana">Solana</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Token
+        <select id="q-from-token"><option>USDC</option><option>ETH</option><option>SOL</option></select>
+      </label>
+      <label>&nbsp;
+        <select id="q-to-token"><option>USDC</option><option>ETH</option><option>SOL</option></select>
+      </label>
+    </div>
+    <button id="q-go" class="primary">Get quote</button>
+    <div id="q-out"></div>
+  </section>
+
+  <!-- PAY -->
+  <section id="tab-pay" class="tab">
+    <p class="hint">Pay for an AwLPay execution (1¢ route price). Get the payment details, pay from your wallet, paste the proof.</p>
+    <label>Amount (USD)
+      <input id="p-amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="10.00">
+    </label>
+    <button id="p-step1" class="primary">1 · Get payment details</button>
+    <div id="p-accepts"></div>
+    <div id="p-step2wrap" hidden>
+      <label>Your tx hash (0x…)
+        <input id="p-txhash" placeholder="0x…">
+      </label>
+      <label>Your signature (0x…)
+        <input id="p-sig" placeholder="0x…">
+      </label>
+      <button id="p-step2" class="primary">2 · Submit proof &amp; pay</button>
+    </div>
+    <div id="p-out"></div>
+  </section>
+
+</main>
+
+<footer>AwLPay v1 · Slid Phi Labs</footer>
+<script src="/app/app.js"></script>
+<script>
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js').catch(()=>{});
+</script>
+</body>
+</html>

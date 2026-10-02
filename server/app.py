@@ -96,7 +96,8 @@ from contextlib import asynccontextmanager
 import anyio
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from . import x402
 from .chamber import load_relayer_keys
@@ -526,6 +527,9 @@ app = Starlette(
         Route("/internal/toll/deposit/verify", toll_deposit_verify,
               methods=ALL_METHODS),
         Route("/internal/toll/send", toll_send_ep, methods=ALL_METHODS),
+        Mount("/app", StaticFiles(
+            directory=os.path.join(os.path.dirname(__file__), "static", "app"),
+            html=True), name="app"),
     ],
 )
 # Outermost first: normalize the path, then log the (normalized) request.
