@@ -3,6 +3,11 @@
 **Live: https://awlpay.fly.dev** — the payment product with no allowlist.
 Any chain, any token — if it has verifiable value, it pays.
 
+> **New here? Start with [QUICKSTART.md](QUICKSTART.md)** — send
+> stablecoins in 5 minutes with zero crypto background:
+> `pip install awlpay` / `npm install awlpay` → wallet → fund → pay $1.
+> Testnet by default, spend caps built in.
+
 AwLPay is the money rail for agents. Quote a conversion for free
 (`POST /api/pay/quote`), execute behind a 1¢ x402 payment gate
 (`POST /api/pay/execute`), and every execution carries an Ed25519-signed

@@ -1,0 +1,30 @@
+{
+  "name": "awlpay",
+  "version": "0.1.0",
+  "description": "AwLPay JavaScript/TypeScript SDK \u2014 agent wallets for multi-rail x402 stablecoin payments (Base + Solana). 5 minutes, zero crypto background.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "viem": "^2.33.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "license": "Apache-2.0"
+}

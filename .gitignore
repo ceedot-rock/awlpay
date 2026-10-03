@@ -1,2 +1,8 @@
 .venv/
 __pycache__/
+py-sdk/dist/
+py-sdk/build/
+py-sdk/*.egg-info/
+js-sdk/dist/
+js-sdk/*.tgz
+node_modules/

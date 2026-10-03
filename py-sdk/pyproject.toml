@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "awlpay"
+version = "0.1.0"
+description = "The 5-minute stablecoin wallet for AI agents. Testnet by default, spend caps built in."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Slid Phi Labs" }]
+keywords = ["x402", "stablecoin", "USDC", "agent-payments", "crypto-wallet"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+  "web3>=7",
+  "eth-account>=0.11",
+  "solders>=0.21",
+  "cryptography>=42",
+]
+
+[project.urls]
+Homepage = "https://awlpay.fly.dev"
+Repository = "https://github.com/ceedot-rock/awlpay"
+Documentation = "https://github.com/ceedot-rock/awlpay/blob/main/QUICKSTART.md"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/awlpay"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

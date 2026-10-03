@@ -5,6 +5,13 @@ answers 402 (Payment Required) with a list of ways to pay; your agent pays
 on any supported rail and retries with proof. No accounts, no API keys,
 no credit cards.
 
+> **Start here — the easy path.** If your agent just needs to *hold and
+> send* stablecoins, skip the manual flow below and use the SDK:
+> [`../QUICKSTART.md`](../QUICKSTART.md) — `pip install awlpay` /
+> `npm install awlpay`, 5 minutes, zero crypto background, testnet by
+> default, spend caps built in. The manual x402 flow below is for when
+> you're paying a 402-gated API directly.
+
 ## What you need
 
 - An HTTP client your agent already has.
