@@ -1,6 +1,6 @@
 {
   "name": "awlpay",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AwLPay JavaScript/TypeScript SDK \u2014 agent wallets for multi-rail x402 stablecoin payments (Base + Solana). 5 minutes, zero crypto background.",
   "type": "module",
   "main": "dist/index.js",
@@ -26,5 +26,11 @@
     "typescript": "^5.7.2",
     "vitest": "^3.0.0"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ceedot-rock/awlpay.git",
+    "directory": "js-sdk"
+  },
+  "homepage": "https://github.com/ceedot-rock/awlpay#readme"
 }
