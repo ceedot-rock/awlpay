@@ -376,7 +376,7 @@ async def index(request):
         "mode": MODE,
         "endpoints": ["/api/pay/quote (free)", "/api/pay/execute (402)",
                       "/health", "/healthz"],
-        "tiers": {"0": "free: 1.0% + 25¢/tx",
+        "tiers": {"0": "free: 0.5%/tx, no fixed fee",
                   "1": "pro: $39/mo, $30k or 500 tx cap",
                   "2": "l33t: $799/mo, fair-use guard"},
     })

@@ -393,8 +393,8 @@ def test_settlement_dryrun_receipt_signed(monkeypatch):
     receipt = json.loads(env["payload"])
     assert receipt["mode"] == "dryrun"
     assert not receipt.get("refused")
-    assert receipt["fee_cents"] == 125 and receipt["net_cents"] == 9875
-    assert receipt["hops"][0]["amount_base_units"] == 98_750_000
+    assert receipt["fee_cents"] == 50 and receipt["net_cents"] == 9950
+    assert receipt["hops"][0]["amount_base_units"] == 99_500_000
     assert receipt["status"] == "ok"
 
 
@@ -402,7 +402,7 @@ def test_settlement_dryrun_dust_refusal_signed(monkeypatch):
     monkeypatch.setenv("AWL_EXECUTION_MODE", "dryrun")
     sk = SigningKey.generate()
     out = settlement.execute_quote(
-        _quote(amount_cents=20), {"volume_used_cents": 0, "txs_used": 0},
+        _quote(amount_cents=0), {"volume_used_cents": 0, "txs_used": 0},
         signing_key=sk, oracle=_oracle_usdc(),
         adapters={"base": _StubAdapter()})
     receipt = json.loads(out["attestation"]["payload"])

@@ -6,8 +6,8 @@ CuNi spec for identical inputs. Cross-check against
 1=pro, 2=l33t; fee_cents integer; status strings as returned here).
 INTEGER CENTS EVERYWHERE — no floats, no rounding ambiguity.
 
-Tiers (Corey, 2026-09-27 — locked):
-    0 free: 1.0% + $0.25/tx
+Tiers (Corey, 2026-09-27 — locked; Free cut 2026-10-06):
+    0 free: 0.5%/tx, no fixed fee (undercuts Phantom 0.85%, MetaMask 0.875%)
     1 pro:  $39/mo, cap $30k volume OR 500 txs/mo; 0% under cap;
             overage falls back to free pricing
     2 l33t: $799/mo unlimited; fair-use compute guard at 127,669 txs/mo
@@ -27,9 +27,8 @@ FREE = 0
 PRO = 1
 L33T = 2
 
-# Free pricing: 1% + 25 cents
-FREE_BPS_NUM = 1          # 1/100 of the amount
-FREE_FLAT_CENTS = 25
+# Free pricing: 0.5% flat, no fixed fee (Corey 2026-10-06)
+FREE_DIVISOR = 200        # amount_cents // 200 = 0.5%
 
 # Pro: $39/mo, $30,000 volume cap, 500 tx cap
 PRO_VOLUME_CAP_CENTS = 3_000_000
@@ -133,14 +132,14 @@ def calculate_fees(amount_cents: int, tier: int,
         return 0, "refused_negative_amount"
 
     if tier == FREE:
-        return amount_cents // 100 + FREE_FLAT_CENTS, "free"
+        return amount_cents // FREE_DIVISOR, "free"
 
     if tier == PRO:
         under_cap = (volume_used_cents + amount_cents <= PRO_VOLUME_CAP_CENTS
                      and txs_used < PRO_TX_CAP)
         if under_cap:
             return 0, "pro_under_cap"
-        return amount_cents // 100 + FREE_FLAT_CENTS, "pro_overage"
+        return amount_cents // FREE_DIVISOR, "pro_overage"
 
     if tier == L33T:
         if txs_used > L33T_TX_FAIR_USE:

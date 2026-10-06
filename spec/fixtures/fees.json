@@ -4,7 +4,7 @@
     "tier": 0,
     "volume_used_cents": 0,
     "txs_used": 0,
-    "fee_cents": 125,
+    "fee_cents": 50,
     "status": "free"
   },
   {
@@ -12,7 +12,7 @@
     "tier": 0,
     "volume_used_cents": 0,
     "txs_used": 0,
-    "fee_cents": 26,
+    "fee_cents": 0,
     "status": "free"
   },
   {
@@ -20,7 +20,7 @@
     "tier": 0,
     "volume_used_cents": 0,
     "txs_used": 0,
-    "fee_cents": 25,
+    "fee_cents": 0,
     "status": "free"
   },
   {
@@ -28,7 +28,7 @@
     "tier": 0,
     "volume_used_cents": 0,
     "txs_used": 0,
-    "fee_cents": 25,
+    "fee_cents": 0,
     "status": "free"
   },
   {
@@ -52,7 +52,7 @@
     "tier": 1,
     "volume_used_cents": 3000000,
     "txs_used": 0,
-    "fee_cents": 25,
+    "fee_cents": 0,
     "status": "pro_overage"
   },
   {
@@ -68,7 +68,7 @@
     "tier": 1,
     "volume_used_cents": 0,
     "txs_used": 500,
-    "fee_cents": 125,
+    "fee_cents": 50,
     "status": "pro_overage"
   },
   {
@@ -76,7 +76,7 @@
     "tier": 1,
     "volume_used_cents": 2999999,
     "txs_used": 499,
-    "fee_cents": 125,
+    "fee_cents": 50,
     "status": "pro_overage"
   },
   {
@@ -84,7 +84,7 @@
     "tier": 1,
     "volume_used_cents": 3000000,
     "txs_used": 10,
-    "fee_cents": 10025,
+    "fee_cents": 5000,
     "status": "pro_overage"
   },
   {
@@ -116,7 +116,7 @@
     "tier": 0,
     "volume_used_cents": 0,
     "txs_used": 0,
-    "fee_cents": 25,
+    "fee_cents": 0,
     "status": "free"
   },
   {

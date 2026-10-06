@@ -1,9 +1,9 @@
 # AwLPay FeeManager fixture: free
-# free tier: 1% + $0.25 on $100.00 → platform_fee_cents=125
+# free tier: 0.5% on $100.00 → platform_fee_cents=50
 # SoT: exact/FeeManager.cuni · spec: docs/fee-manager-spec.md
 
 def free_formula(amount_cents: int) -> int do
-    ret amount_cents * 10 / 1000 + 25
+    ret amount_cents / 200
 end
 
 def emit_fees(tier: str, amount_cents: int, volume_month_usd_cents: int, txs_month: int) -> int do

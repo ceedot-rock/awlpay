@@ -8,7 +8,7 @@ See [`docs/fee-manager-spec.md`](../docs/fee-manager-spec.md).
 
 | Tier | Seat price | Platform fee |
 |------|------------|--------------|
-| free | — | 1.0% + $0.25 (`amount_cents * 10 / 1000 + 25`) |
+| free | — | 0.5% (`amount_cents / 200`) |
 | pro | $39/mo | **0** only if `volume_month_usd_cents < 3_000_000` **AND** `txs_month < 500`; else free formula as `pro_overage` |
 | l33t | $799/mo | 0 |
 

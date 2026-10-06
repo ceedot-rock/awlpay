@@ -42,7 +42,7 @@ earned real toll revenue. Everything else in this repo is tooling around it.
 
 ## Fee tiers (locked 2026-09-27)
 
-Free: 1.0% + $0.25/tx. Pro: $39/mo, $0 under $30k volume / 500 txs. L33t:
+Free: 0.5%/tx, no fixed fee. Pro: $39/mo, $0 under $30k volume / 500 txs. L33t:
 $799/mo unlimited. All integer cents, machine-verified against the CuNi law
 in `spec/`.
 
@@ -112,7 +112,7 @@ no floats, no rounding ambiguity.
 
 | Tier | Name | Price | Rule |
 |------|------|-------|------|
-| 0 | Free | pay-per-tx | **1.0% + $0.25/tx**: `fee = amount_cents // 100 + 25` |
+| 0 | Free | pay-per-tx | **0.5%/tx, no fixed fee**: `fee = amount_cents // 200` |
 | 1 | Pro | **$39/mo** | Cap **$30k volume OR 500 txs/mo**. Under cap: `fee = 0` (`pro_under_cap`). Over either cap: falls back to free pricing (`pro_overage`). Boundary: under iff `volume_used + amount <= 3_000_000` **and** `txs_used < 500`. |
 | 2 | L33t | **$799/mo** | Unlimited, `fee = 0` (`l33t`). Fair-use compute guard at **127,669 txs/mo** (econ-derived 2026-09-28 — the tx count where modeled variable cost/tx consumes 35% of the $799 sub at a 65% margin; see `PRICING.md`): `txs_used > 127_669` → `l33t_fair_use_review` (fee still 0, flagged for review). |
 

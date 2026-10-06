@@ -3,7 +3,7 @@
 # Integer cents. Same stdout or refuse. No approximate mode.
 #
 # Law:
-#   free  → amount_cents * 10 / 1000 + 25 ; tier_applied=free
+#   free  → amount_cents / 200 ; tier_applied=free   (0.5% flat, Corey 2026-10-06)
 #   pro   → 0 if volume_month_usd_cents < 3000000 AND txs_month < 500
 #           otherwise free formula with tier_applied=pro_overage
 #   l33t  → 0 ; tier_applied=l33t
@@ -13,7 +13,7 @@
 # Studio gate: py/go/js (+ sol when catalog seat proves).
 
 def free_formula(amount_cents: int) -> int do
-    ret amount_cents * 10 / 1000 + 25
+    ret amount_cents / 200
 end
 
 def emit_fees(tier: str, amount_cents: int, volume_month_usd_cents: int, txs_month: int) -> int do
@@ -44,7 +44,7 @@ def emit_fees(tier: str, amount_cents: int, volume_month_usd_cents: int, txs_mon
 end
 
 # Fixture gold (deterministic key=value pairs):
-# free $100.00 → 125
+# free $100.00 → 50
 emit_fees("free", 10000, 0, 0)
 # pro under BOTH caps
 emit_fees("pro", 10000, 100000, 10)

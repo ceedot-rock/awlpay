@@ -60,7 +60,7 @@ reconciled to the cent (2.039987 USDC).
 
 | Tier | Price |
 |------|-------|
-| Free | 1.0% + $0.25 per transaction |
+| Free | 0.5% per transaction, no fixed fee |
 | Pro | $39/mo — 0% under cap ($30k volume or 500 txs/mo), overage falls back to Free |
 | L33t | $799/mo unlimited (fair-use compute guard) |
 

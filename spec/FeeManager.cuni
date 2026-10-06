@@ -1,4 +1,5 @@
-# awLPay FeeManager v1 — CuNi specification (locked product decisions 2026-09-27).
+# awLPay FeeManager v1 — CuNi specification (locked product decisions 2026-09-27;
+# Free tier cut to 0.5% flat 2026-10-06 per Corey: undercut Phantom 0.85%/MetaMask 0.875%).
 #
 # CuNi limitations noted honestly:
 # - The Solidity seat refuses `typ` records by design (compile-or-refuse), so
@@ -30,8 +31,8 @@ def calculateFees(amount_cents: int, tier: int, volume_used_cents: int, txs_used
         ret FeeQuote(0, "refused_negative_amount")
     end
     if tier == 0 do
-        # Free: 1.0% + $0.25 per tx, always.
-        ret FeeQuote(amount_cents / 100 + 25, "free")
+        # Free: 0.5% per tx, no fixed fee — always.
+        ret FeeQuote(amount_cents / 200, "free")
     end
     if tier == 1 do
         # Pro: $39/mo, cap $30k volume (3,000,000 cents) OR 500 txs/mo.
@@ -39,7 +40,7 @@ def calculateFees(amount_cents: int, tier: int, volume_used_cents: int, txs_used
         if volume_used_cents + amount_cents <= 3000000 and txs_used < 500 do
             ret FeeQuote(0, "pro_under_cap")
         end
-        ret FeeQuote(amount_cents / 100 + 25, "pro_overage")
+        ret FeeQuote(amount_cents / 200, "pro_overage")
     end
     if tier == 2 do
         # L33t: $799/mo, unlimited. The fair-use guard is an honest flag,

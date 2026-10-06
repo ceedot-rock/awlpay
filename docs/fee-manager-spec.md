@@ -6,7 +6,7 @@ Locked 2026-09-27 from product conversation. Fee logic must match CuNi exactness
 
 | Tier | Price | Platform fee |
 |------|-------|--------------|
-| free | — | 1.0% + $0.25 per settlement |
+| free | — | 0.5% per settlement, no fixed fee |
 | pro | $39/mo | 0% under cap ($30k volume **or** 500 txs/mo); overage falls back to free formula |
 | l33t | $799/mo | 0% unlimited (fair-use compute guard) |
 

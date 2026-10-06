@@ -124,15 +124,15 @@ def test_pro_cap_boundaries():
 
 
 def test_pro_overage_falls_back_to_free_pricing_exactly():
-    # Overage IS free pricing: 1% floored + 25c, on the same amounts.
+    # Overage IS free pricing: 0.5% floored, on the same amounts.
     for amt in (1, 99, 100, 101, 333, 10_000, 999_999):
         over_fee, over_status = fees.calculate_fees(amt, 1, 3_000_000, 0)
         free_fee, _ = fees.calculate_fees(amt, 0, 0, 0)
         assert over_status == "pro_overage"
-        assert over_fee == free_fee == amt // 100 + 25
+        assert over_fee == free_fee == amt // 200
     # ... and via the tx-count cap too.
     over_fee, over_status = fees.calculate_fees(10_000, 1, 0, 500)
-    assert (over_fee, over_status) == (125, "pro_overage")
+    assert (over_fee, over_status) == (50, "pro_overage")
 
 
 def test_l33t_fair_use_cap_boundaries():
@@ -155,8 +155,9 @@ def test_l33t_guard_is_tx_count_only():
     assert fee == 0
 
 
-def test_free_tier_unchanged():
-    # Corey's locked free pricing is untouched by this workstream.
-    assert fees.calculate_fees(10_000, 0, 0, 0) == (125, "free")
-    assert fees.calculate_fees(0, 0, 0, 0) == (25, "free")
-    assert fees.FREE_FLAT_CENTS == 25
+def test_free_tier_2026_10_06():
+    # Corey 2026-10-06: Free cut to 0.5% flat, no fixed fee —
+    # undercuts Phantom 0.85% / MetaMask 0.875% at every size.
+    assert fees.calculate_fees(10_000, 0, 0, 0) == (50, "free")
+    assert fees.calculate_fees(0, 0, 0, 0) == (0, "free")
+    assert fees.FREE_DIVISOR == 200

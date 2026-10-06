@@ -20,19 +20,20 @@ from server.router import ConverterRouter  # noqa: E402
 
 # ---------------------------------------------------------------- fees
 def test_fee_exactness_core_cases():
-    # Free: 1.0% + 25c
-    assert fees.calculate_fees(10_000, 0, 0, 0) == (125, "free")
-    assert fees.calculate_fees(99, 0, 0, 0) == (25, "free")      # 0 + 25
-    assert fees.calculate_fees(101, 0, 0, 0) == (26, "free")     # 1 + 25
+    # Free: 0.5% flat, no fixed fee
+    assert fees.calculate_fees(10_000, 0, 0, 0) == (50, "free")
+    assert fees.calculate_fees(99, 0, 0, 0) == (0, "free")       # floors to 0
+    assert fees.calculate_fees(101, 0, 0, 0) == (0, "free")      # floors to 0
+    assert fees.calculate_fees(400, 0, 0, 0) == (2, "free")      # 0.5% of $4
     # Pro under cap: 0 fee
     assert fees.calculate_fees(10_000, 1, 0, 0) == (0, "pro_under_cap")
     # Pro at exactly the caps: volume boundary inclusive, tx boundary exclusive
     assert fees.calculate_fees(1, 1, 2_999_999, 0) == (0, "pro_under_cap")
     assert fees.calculate_fees(1, 1, 2_999_999, 499) == (0, "pro_under_cap")
     # Pro overage: volume or txs -> free pricing
-    assert fees.calculate_fees(10_000, 1, 2_999_999, 0) == (125, "pro_overage")
-    assert fees.calculate_fees(10_000, 1, 0, 500) == (125, "pro_overage")
-    assert fees.calculate_fees(10_000, 1, 0, 501) == (125, "pro_overage")
+    assert fees.calculate_fees(10_000, 1, 2_999_999, 0) == (50, "pro_overage")
+    assert fees.calculate_fees(10_000, 1, 0, 500) == (50, "pro_overage")
+    assert fees.calculate_fees(10_000, 1, 0, 501) == (50, "pro_overage")
     # L33t: 0 fee; fair-use guard trips above 127,669 txs/mo (econ-derived;
     # see PRICING.md). Boundary is exclusive: txs_used == cap is still l33t.
     assert fees.calculate_fees(10_000, 2, 0, 0) == (0, "l33t")
@@ -52,7 +53,7 @@ def test_fee_integer_arithmetic():
     # No floats anywhere: odd cent amounts floor correctly (integer division)
     for amt in (1, 3, 33, 333, 999_999):
         fee, _ = fees.calculate_fees(amt, 0, 0, 0)
-        assert fee == amt // 100 + 25
+        assert fee == amt // 200
         assert isinstance(fee, int)
 
 
@@ -155,7 +156,7 @@ def test_settlement_dust_refused():
     out = settlement.execute_quote(
         {"from_chain": "ethereum", "from_token": "USDC",
          "to_chain": "ethereum", "to_token": "USDC",
-         "amount_cents": 20, "tier": 0, "path": []},
+         "amount_cents": 0, "tier": 0, "path": []},
         {"volume_used_cents": 0, "txs_used": 0}, signing_key=sk)
     receipt = json.loads(out["attestation"]["payload"])
     assert receipt["refused"] is True
@@ -234,7 +235,7 @@ def test_http_quote_ok(server):
         "volume_used_cents": 0, "txs_used": 0})
     assert code == 200
     assert not body.get("refused")
-    assert body["fees"]["free"]["fee_cents"] == 125
+    assert body["fees"]["free"]["fee_cents"] == 50
     assert body["fees"]["pro"]["status"] == "pro_under_cap"
     assert body["fees"]["l33t"]["fee_cents"] == 0
     assert body["net_cents"] == 10_000
@@ -251,7 +252,7 @@ def test_http_quote_refusals(server):
     # dust
     code, body, _ = _post(server, "/api/pay/quote", {
         "from_chain": "ethereum", "from_token": "USDC",
-        "to_chain": "ethereum", "to_token": "USDC", "amount_cents": 20, "tier": 0})
+        "to_chain": "ethereum", "to_token": "USDC", "amount_cents": 0, "tier": 0})
     assert code == 200 and body["refused"] is True and body["reason"] == "dust_eaten_by_fees"
     # bad request shape still 200-refusal
     code, body, _ = _post(server, "/api/pay/quote", {"amount_cents": "lots"})
@@ -353,7 +354,7 @@ def test_http_execute_refused_quote_parity(server):
     same law as /quote, through the 402 gate."""
     body = {"from_chain": "ethereum", "from_token": "USDC",
             "to_chain": "ethereum", "to_token": "USDC",
-            "amount_cents": 20, "tier": 0,
+            "amount_cents": 0, "tier": 0,
             "idempotency_key": "test-nonce-dust-1"}
     code, b, _ = _post(server, "/api/pay/execute", body,
                        {"X-Test-Payment": "ok"})
