@@ -1,5 +1,10 @@
 # AwLPay
 
+[![Audited checks](https://github.com/ceedot-rock/awlpay/actions/workflows/audited-checks.yml/badge.svg)](https://github.com/ceedot-rock/awlpay/actions/workflows/audited-checks.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![npm](https://img.shields.io/npm/v/awlpay.svg)](https://www.npmjs.com/package/awlpay)
+[![PyPI](https://img.shields.io/pypi/v/awlpay.svg)](https://pypi.org/project/awlpay/)
+
 **Live: https://awlpay.fly.dev** — the payment product with no allowlist.
 Any chain, any token — if it has verifiable value, it pays.
 

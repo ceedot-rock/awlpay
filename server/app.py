@@ -371,7 +371,12 @@ async def index(request):
     if request.method != "GET":
         return _method_404(request, "GET")
     return JSONResponse({
+        "ok": True,
         "service": "awlpay",
+        "about": ("Any chain, any token with verifiable value. "
+                  "Anything-to-anything conversion, or refuse. "
+                  "Quote is free; execute is x402-gated."),
+        "docs": "https://github.com/ceedot-rock/awlpay/blob/main/openapi.yaml",
         "version": VERSION,
         "mode": MODE,
         "endpoints": ["/api/pay/quote (free)", "/api/pay/execute (402)",
