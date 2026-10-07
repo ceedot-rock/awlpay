@@ -50,7 +50,10 @@ paths:
               schema:
                 type: object
                 properties:
+                  ok: { type: boolean }
                   service: { type: string }
+                  about: { type: string }
+                  docs: { type: string }
                   version: { type: string }
                   mode: { type: string }
                   endpoints: { type: array, items: { type: string } }
