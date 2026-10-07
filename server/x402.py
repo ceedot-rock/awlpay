@@ -75,6 +75,7 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.request
 
 from . import ethsig
@@ -282,23 +283,36 @@ def get_rpc():
 # --------------------------------------------------------------------------
 
 _used_lock = threading.RLock()  # RLock: mark_payment_used() nests via _load_used()
-_used_payments: set[str] | None = None
+# key -> first-seen unix timestamp. Insertion-ordered eviction (oldest
+# first): a bounded replay set MUST evict by age, never by key sort
+# order — sorted() eviction silently un-guards live keys (nitpikr
+# py_replay_eviction, proven 2026-10-06).
+_used_payments: dict[str, float] | None = None
 
 
 def _state_path() -> str:
     return os.environ.get("AWL_X402_STATE", "").strip()
 
 
-def _load_used() -> set[str]:
+def _load_used() -> dict[str, float]:
     global _used_payments
     with _used_lock:
         if _used_payments is None:
-            _used_payments = set()
+            _used_payments = {}
             path = _state_path()
             if path:
                 try:
                     with open(path) as f:
-                        _used_payments = set(json.load(f).get("used", []))
+                        raw = json.load(f).get("used", [])
+                    if isinstance(raw, dict):
+                        # v2 format: {key: first_seen_ts}
+                        _used_payments = {k: float(v)
+                                          for k, v in raw.items()}
+                    else:
+                        # v1 format: [keys] — all predate this process,
+                        # so they share one timestamp (all are oldest).
+                        now = time.time()
+                        _used_payments = {k: now for k in raw}
                 except (OSError, ValueError):
                     pass
         return _used_payments
@@ -310,8 +324,12 @@ def _save_used() -> None:
         return
     tmp = path + ".tmp"
     try:
+        # Oldest first; keep the NEWEST 20000 (insertion order, not key
+        # sort order — see mark_payment_used).
+        ordered = sorted(_used_payments, key=_used_payments.get)
         with open(tmp, "w") as f:
-            json.dump({"used": sorted(_used_payments)[-20000:]}, f)
+            json.dump({"used": {k: _used_payments[k]
+                                for k in ordered[-20000:]}}, f)
         os.replace(tmp, path)
     except OSError:
         pass
@@ -329,10 +347,10 @@ def is_payment_used(key: str) -> bool:
     return key in _load_used()
 
 
-def used_set() -> set:
-    """Read accessor for the replay set, for verify_payment's read-only
-    replay check. Do not mutate the returned set — consume via
-    mark_payment_used()."""
+def used_set() -> dict:
+    """Read accessor for the replay store, for verify_payment's read-only
+    replay check. Do not mutate the returned mapping — consume via
+    mark_payment_used(). (`key in used_set()` still works.)"""
     return _load_used()
 
 
@@ -342,11 +360,14 @@ def mark_payment_used(key: str) -> None:
     the idempotency-key consume)."""
     with _used_lock:
         used = _load_used()
-        used.add(key)
+        # First-seen wins: re-marking must not refresh the timestamp
+        # (or a replay attempt could keep its own key young forever).
+        used.setdefault(key, time.time())
         if len(used) > 20000:
-            # keep the set bounded; drop oldest-ish (sorted order is stable)
-            for old in sorted(used)[:len(used) - 20000]:
-                used.discard(old)
+            # Evict OLDEST first by first-seen time — never by key sort
+            # order (sorted() eviction silently un-guards live keys).
+            for old in sorted(used, key=used.get)[:len(used) - 20000]:
+                del used[old]
     _save_used()
 
 
@@ -354,7 +375,7 @@ def reset_used_for_tests() -> None:
     """Test-only: clear the in-memory replay set."""
     global _used_payments
     with _used_lock:
-        _used_payments = set()
+        _used_payments = {}
 
 
 # --------------------------------------------------------------------------
@@ -507,6 +528,11 @@ def _verify_evm(tx_hash, network, rail, min_units, pay_to, used_set,
     if key in used_set:
         return False, {"reason": "replay: payment already used",
                        "replay_key": key}
+    # The rail dict's pinned values win over the globals: callers like
+    # the toll path pin rail["usdc"] to forbid asset-override env vars.
+    # (nitpikr py_dead_pin, 2026-10-06: the pin was assigned but never
+    # read — the defense it documented didn't exist.)
+    usdc_contract = (rail or {}).get("usdc") or rail_usdc(network)
     urls = rail_rpcs(network)
     call = rpc if rpc else (lambda m, p: _rpc_any(m, p, urls))
     if rpc is None and not urls:
@@ -522,7 +548,7 @@ def _verify_evm(tx_hash, network, rail, min_units, pay_to, used_set,
     if receipt.get("status") not in ("0x1", 1):
         return False, {"reason": "tx reverted (status != ok)"}
     # Payer = the token sender from the Transfer logs, NOT receipt["from"].
-    senders = _transfer_senders_to(receipt, pay_to, rail_usdc(network))
+    senders = _transfer_senders_to(receipt, pay_to, usdc_contract)
     if len(senders) > 1:
         return False, {"reason": "ambiguous payer: %d distinct token senders "
                                  "in one tx; pay from a single address"
@@ -546,7 +572,7 @@ def _verify_evm(tx_hash, network, rail, min_units, pay_to, used_set,
     if not sig_ok:
         return False, {"reason": sig_reason, "replay_key": key,
                        "payer": payer}
-    paid = _sum_usdc_to(receipt, pay_to, rail_usdc(network))
+    paid = _sum_usdc_to(receipt, pay_to, usdc_contract)
     if paid < min_units:
         return False, {"reason": "underpaid: got %.6f USDC, need %.6f"
                                  % (paid / 10 ** USDC_DECIMALS,

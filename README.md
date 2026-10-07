@@ -58,7 +58,7 @@ Here is why that matters. Paying with crypto today means navigating a maze: is t
 
 And when the math doesn't work, it refuses the payment instead of giving you a bad rate. No silent slippage, no mystery haircut — a clean refusal beats a quietly unfair deal.
 
-The Free tier costs 1.0% plus $0.25 per payment. Pro is $39 a month with no platform fee under the cap — $30,000 in volume or 500 transactions a month, whichever comes first. L33t is $799 a month, unlimited with a fair-use guard on compute.
+The Free tier costs 0.5% flat per payment. Pro is $39 a month with no platform fee under the cap — $30,000 in volume or 500 transactions a month, whichever comes first. L33t is $799 a month, unlimited with a fair-use guard on compute.
 
 **awLPay** is a payment product from Slid Phi Labs: **any chain, any token — if it has verifiable value.**
 
@@ -122,10 +122,10 @@ Status strings returned by `calculate_fees`: `free`, `pro_under_cap`, `pro_overa
 see `tests/test_crosscheck.py` skip policy.)
 
 Examples (from verified fixtures):
-- `$100.00` free tier → `10_000 // 100 + 25 = 125¢` fee, net `9875¢`
+- `$100.00` free tier → `10_000 // 200 = 50¢` fee, net `9950¢`
 - `$100.00` pro tier, fresh usage → `0¢` fee (`pro_under_cap`)
 - `$100.00` pro tier, `volume_used = 2_999_999` (so `+10_000` exceeds $30k) →
-  `125¢` (`pro_overage`)
+  `50¢` (`pro_overage`)
 - negative amount on any tier → `(0, "refused_negative_amount")`
 
 ## API reference
