@@ -14,7 +14,7 @@ describe('quoteConversion', () => {
     if ('error' in q) return;
     assert.equal(q.usd_cents, 15_000);
     assert.equal(q.accepted_amount_minor, 15_000);
-    assert.equal(q.platform_fee_cents, 175);
+    assert.equal(q.platform_fee_cents, 75); // 0.5% flat: 15000 // 200
     assert.equal(q.path, 'usd_bridge');
     assert.ok(q.pay_debit_minor > 10_000);
   });
@@ -28,18 +28,28 @@ describe('quoteConversion', () => {
     assert.equal(q.pay_debit_minor, 10_000);
   });
 
-  it('refuses when the flat fee eats the payment', () => {
+  it('no flat fee: a 1c payment is no longer eaten (fee rounds to 0)', () => {
     const q = quoteConversion('USD', 1, 'USD', 'free', book);
-    assert.deepEqual(q, { error: 'refuse', reason: 'fee_exceeds_value' });
+    assert.equal('error' in q, false);
+    if ('error' in q) return;
+    assert.equal(q.platform_fee_cents, 0); // 1 // 200 = 0
+    assert.equal(q.accepted_amount_minor, 1);
+  });
+
+  it('refuses non-positive amounts', () => {
+    assert.deepEqual(quoteConversion('USD', 0, 'USD', 'free', book), {
+      error: 'refuse',
+      reason: 'invalid_amount',
+    });
   });
 
   it('credit rail puts the card fee in the quote and does not debit the coin', () => {
     const q = quoteConversion('USD', 5_000, 'USD', 'free', book, undefined, 'credit');
     assert.equal('error' in q, false);
     if ('error' in q) return;
-    assert.equal(q.route_fee_cents, 175);
-    assert.equal(q.platform_fee_cents, 75);
-    assert.equal(q.card_charge_cents, 5_250);
+    assert.equal(q.route_fee_cents, 175); // credit rail schedule, unchanged
+    assert.equal(q.platform_fee_cents, 25); // 0.5% flat: 5000 // 200
+    assert.equal(q.card_charge_cents, 5_200); // 5000 + 25 platform + 175 route
     assert.equal(q.pay_debit_minor, 0);
   });
 
@@ -58,8 +68,8 @@ describe('quoteConversion', () => {
     assert.equal('error' in q, false);
     if ('error' in q) return;
     assert.equal(q.accepted_amount_minor, 5_000);
-    assert.equal(q.platform_fee_cents, 75);
-    assert.equal(q.pay_debit_minor, 5_075);
+    assert.equal(q.platform_fee_cents, 25); // 0.5% flat: 5000 // 200
+    assert.equal(q.pay_debit_minor, 5_025);
     assert.equal(q.path, 'identity');
   });
 });

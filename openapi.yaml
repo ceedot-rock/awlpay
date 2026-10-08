@@ -148,7 +148,7 @@ components:
           type: integer
           enum: [0, 1, 2]
           default: 0
-          description: 0=free (1.0% + 25c), 1=pro, 2=l33t
+          description: 0=free (0.5% flat, no fixed fee — locked 2026-10-06), 1=pro, 2=l33t
         volume_used_cents: { type: integer, minimum: 0, default: 0 }
         txs_used: { type: integer, minimum: 0, default: 0 }
         idempotency_key: { type: string }

@@ -6,7 +6,8 @@
 [![PyPI](https://img.shields.io/pypi/v/awlpay.svg)](https://pypi.org/project/awlpay/)
 
 **Live: https://awlpay.fly.dev** — the payment product with no allowlist.
-Any chain, any token — if it has verifiable value, it pays.
+Five chains, three tokens — if the token has a verifiable price and a
+priced path exists, it pays.
 
 AwLPay is the money rail for agents. Quote a conversion for free
 (`POST /api/pay/quote`), execute behind a 1¢ x402 payment gate
@@ -39,8 +40,9 @@ earned real toll revenue. Everything else in this repo is tooling around it.
   live server speaks `/api/pay/quote` and `/api/pay/execute`. The SDK needs a
   route remap before it works against production — the fee math and types are
   good, the endpoints are not.
-- **`mcp/`** defaults to `https://api.awlpay.com`; point `AWLPAY_BASE_URL` at
-  `https://awlpay.fly.dev` and use the `/api/pay/*` routes.
+- **`mcp/`** defaults to `https://awlpay.fly.dev` (override with
+  `AWLPAY_BASE_URL`) and speaks the live `/api/pay/*` routes. Its local
+  fee preview mirrors `server/fees.py` exactly (0.5% flat).
 - **`openapi.yaml`** describes the old TypeScript server's `/v1/*` surface,
   not the live Python server. Kept for reference; a fresh spec for
   `/api/pay/*` is TODO.
@@ -57,15 +59,15 @@ in `spec/`.
 
 ## What AwLPay is
 
-AwLPay is a payment product with no allowlist. It accepts any token on any chain — if the token has a verifiable price, it pays. You don't need to ask whether your chain or your coin is supported. If it has value, it works.
+AwLPay is a payment product with no allowlist. It converts across five chains (ethereum, base, polygon, arbitrum, solana) and three tokens (ETH, USDC, SOL), bridged as USDC between chains and swapped same-chain — if the token has a verifiable price and a priced path exists, it pays. If either leg is unpriced or no path connects them, it refuses with `no_conversion_path` instead of quoting a bad rate.
 
-Here is why that matters. Paying with crypto today means navigating a maze: is this chain supported, is this token accepted, which bridge, what rate, what fee. AwLPay collapses that to a single question — does it have a verifiable price? — and handles the rest. Its converter turns anything into anything whenever a conversion path exists and the amount survives the fees.
+Here is why that matters. Paying with crypto today means navigating a maze: is this chain supported, is this token accepted, which bridge, what rate, what fee. AwLPay collapses that to two questions — does it have a verifiable price, and does a priced path exist? — and handles the rest. Its converter routes across the supported chains and tokens whenever a conversion path exists and the amount survives the fees.
 
 And when the math doesn't work, it refuses the payment instead of giving you a bad rate. No silent slippage, no mystery haircut — a clean refusal beats a quietly unfair deal.
 
 The Free tier costs 0.5% flat per payment. Pro is $39 a month with no platform fee under the cap — $30,000 in volume or 500 transactions a month, whichever comes first. L33t is $799 a month, unlimited with a fair-use guard on compute.
 
-**awLPay** is a payment product from Slid Phi Labs: **any chain, any token — if it has verifiable value.**
+**awLPay** is a payment product from Slid Phi Labs: **five chains, three tokens — if it has a verifiable price and a priced path exists.**
 
 The law: a conversion is only quoted when **both** tokens pass a `hasValue()` price check,
 a priced path exists between them, and the fee math survives. Otherwise the quote
@@ -163,11 +165,11 @@ Success response (200):
     {"chain": "base",     "token": "USDC", "hop": "bridge"}
   ],
   "fees": {
-    "free": {"fee_cents": 125, "status": "free",          "net_cents": 9875},
+    "free": {"fee_cents": 50,  "status": "free",          "net_cents": 9950},
     "pro":  {"fee_cents": 0,   "status": "pro_under_cap", "net_cents": 10000},
     "l33t": {"fee_cents": 0,   "status": "l33t",          "net_cents": 10000}
   },
-  "tier": "free", "net_cents": 9875, "amount_cents": 10000
+  "tier": "free", "net_cents": 9950, "amount_cents": 10000
 }
 ```
 
@@ -179,7 +181,8 @@ Refusal reasons (200, `{"refused": true, ...}`):
   (e.g. intermediate hops unpriced, or unknown chain/token in the router graph)
 - `dust_eaten_by_fees` — fee ≥ amount on the requested tier
   (`{"refused": true, "reason": "dust_eaten_by_fees",
-    "detail": "fee 25¢ >= amount 10¢ on tier free", "fees": {...}}`)
+    "detail": "fee 0¢ >= amount 0¢ on tier free", "fees": {...}}`
+  — with the 0.5% flat fee, only a zero amount is dust)
 - `refused_negative_amount` — negative `amount_cents`
 - `bad_request` — malformed JSON, missing/invalid fields
   (e.g. `tier` not in 0/1/2)
@@ -256,7 +259,7 @@ Paid (real X-PAYMENT), same body as `/quote`, 200:
   "attestation": {
     "alg": "ed25519",
     "kid": "b521ad84a17fe68f",
-    "payload": "{\"amount_cents\":10000,\"fee_cents\":125,\"from_chain\":\"ethereum\",...\"mode\":\"mock\",\"net_cents\":9875,...}",
+    "payload": "{\"amount_cents\":10000,\"fee_cents\":50,\"from_chain\":\"ethereum\",...\"mode\":\"mock\",\"net_cents\":9950,...}",
     "sig": "3363edcccacada5b…"
   }
 }

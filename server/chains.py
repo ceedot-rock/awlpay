@@ -39,6 +39,7 @@ import datetime
 import json
 import os
 import re
+import sys
 import threading
 import urllib.request
 
@@ -582,8 +583,12 @@ def _toll_state_save(state: dict, network: str = "mainnet") -> None:
         with open(tmp, "w") as f:
             json.dump(state, f)
         os.replace(tmp, path)
-    except OSError:
-        pass
+    except OSError as e:
+        # LOUD: silence here degrades idempotency to in-memory only. The
+        # operator must know the state file is unwritable.
+        print("LOUD: toll state save FAILED (%s): %s — idempotency is "
+              "in-memory only until this is fixed" % (path, e),
+              file=sys.stderr, flush=True)
 
 
 def _toll_ledger_append(entry: dict, network: str = "mainnet") -> None:
@@ -593,8 +598,13 @@ def _toll_ledger_append(entry: dict, network: str = "mainnet") -> None:
     try:
         with open(path, "a") as f:
             f.write(json.dumps(entry) + "\n")
-    except OSError:
-        pass
+    except OSError as e:
+        # LOUD: the audit trail is the money record — a failed append must
+        # never pass silently.
+        print("LOUD: toll ledger append FAILED (%s): %s — transfer %s is "
+              "NOT in the on-disk ledger" % (path, e,
+                                             entry.get("tx_hash", "?")),
+              file=sys.stderr, flush=True)
 
 
 def toll_send_usdc(slot: str, to_address: str, amount_uusdc: int,
@@ -659,6 +669,17 @@ def toll_send_usdc(slot: str, to_address: str, amount_uusdc: int,
                 "token": token,
                 "network": network}
 
+    # PERF NOTE (not a correctness issue): the whole send — including the
+    # broadcast with its 25s RPC timeout — runs under _toll_state_lock, so
+    # concurrent toll sends serialize on the wire. This is DELIBERATE: the
+    # on-chain nonce is read in fill_live, and the next send must observe
+    # the previous broadcast as landed before reading its own nonce. If the
+    # broadcast ran outside the lock, two overlapping sends could read the
+    # SAME pending nonce; one transfer would then silently never land while
+    # its idempotency record says "sent". Shrinking this critical section
+    # would require persistent per-slot nonce tracking to stay safe — out
+    # of proportion for this low-volume internal endpoint. (2026-10-07:
+    # a lock-free restructure was prototyped and reverted for this reason.)
     with _toll_state_lock:
         state = _toll_state_load(network)
         consumed = state["consumed"]

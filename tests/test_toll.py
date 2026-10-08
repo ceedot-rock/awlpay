@@ -131,11 +131,11 @@ def test_auth_required(client):
     r = client.post("/internal/toll/deposit/verify",
                     json={"slot": "escrow", "tx_hash": txh,
                           "payer_sig": sig, "min_uusdc": 1_000_000,
-                          "ref": ref})
+                          "ref": ref, "network": "mainnet"})
     assert r.status_code == 403
     r = _post(client, {"slot": "escrow", "tx_hash": txh,
                        "payer_sig": sig, "min_uusdc": 1_000_000,
-                       "ref": ref}, secret="wrong")
+                       "ref": ref, "network": "mainnet"}, secret="wrong")
     assert r.status_code == 403
 
 
@@ -143,7 +143,7 @@ def test_mainnet_gate(client, monkeypatch):
     monkeypatch.setenv("TOLL_MAINNET_AUTHORIZED", "0")
     txh, sig, _, ref = new_deposit()
     r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 1_000_000, "ref": ref})
+                       "min_uusdc": 1_000_000, "ref": ref, "network": "mainnet"})
     assert r.status_code == 403
     assert r.json()["verified"] is False
 
@@ -151,7 +151,7 @@ def test_mainnet_gate(client, monkeypatch):
 def test_valid_escrow_deposit(client):
     txh, sig, payer, ref = new_deposit(amount_units=5_000_000)
     r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 5_000_000, "ref": ref})
+                       "min_uusdc": 5_000_000, "ref": ref, "network": "mainnet"})
     assert r.status_code == 200
     body = r.json()
     assert body["verified"] is True
@@ -164,7 +164,7 @@ def test_valid_escrow_deposit(client):
 def test_valid_bonds_deposit(client):
     txh, sig, payer, ref = new_deposit(slot="bonds", amount_units=2_000_000)
     r = _post(client, {"slot": "bonds", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 2_000_000, "ref": ref})
+                       "min_uusdc": 2_000_000, "ref": ref, "network": "mainnet"})
     assert r.status_code == 200
     assert r.json()["verified"] is True
 
@@ -173,7 +173,7 @@ def test_wrong_wallet_refused(client):
     txh, sig, _, ref = new_deposit(
         to_wallet="0x000000000000000000000000000000000000dEaD")
     r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 1_000_000, "ref": ref})
+                       "min_uusdc": 1_000_000, "ref": ref, "network": "mainnet"})
     assert r.json()["verified"] is False
     assert "no USDC transfer" in r.json()["reason"]
 
@@ -181,7 +181,7 @@ def test_wrong_wallet_refused(client):
 def test_underpaid_refused(client):
     txh, sig, _, ref = new_deposit(amount_units=999_999)
     r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 1_000_000, "ref": ref})
+                       "min_uusdc": 1_000_000, "ref": ref, "network": "mainnet"})
     assert r.json()["verified"] is False
     assert "underpaid" in r.json()["reason"]
 
@@ -193,7 +193,7 @@ def test_wrong_signer_refused(client):
     _, evil_sig = sign_eoa(msg, 0xBAD)
     r = _post(client, {"slot": "escrow", "tx_hash": txh,
                        "payer_sig": evil_sig, "min_uusdc": 1_000_000,
-                       "ref": ref})
+                       "ref": ref, "network": "mainnet"})
     assert r.json()["verified"] is False
 
 
@@ -202,7 +202,7 @@ def test_canonical_usdc_only(client, monkeypatch):
                        "0x0000000000000000000000000000000000000001")
     txh, sig, _, ref = new_deposit()
     r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 1_000_000, "ref": ref})
+                       "min_uusdc": 1_000_000, "ref": ref, "network": "mainnet"})
     assert r.status_code == 403
     assert "canonical" in r.json()["reason"]
 
@@ -211,7 +211,7 @@ def test_no_rpc_no_fallback(client):
     x402mod.clear_test_rpc()  # no seam, no TOLL_RPC_BASE
     txh, sig, _, ref = new_deposit()
     r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 1_000_000, "ref": ref})
+                       "min_uusdc": 1_000_000, "ref": ref, "network": "mainnet"})
     assert r.status_code == 403
     assert "TOLL_RPC_BASE" in r.json()["reason"]
 
@@ -219,7 +219,7 @@ def test_no_rpc_no_fallback(client):
 def test_reverted_tx_refused(client):
     txh, sig, _, ref = new_deposit(status="0x0")
     r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
-                       "min_uusdc": 1_000_000, "ref": ref})
+                       "min_uusdc": 1_000_000, "ref": ref, "network": "mainnet"})
     assert r.json()["verified"] is False
     assert "reverted" in r.json()["reason"]
 
@@ -290,7 +290,7 @@ def test_send_happy_path(send_client):
     to = "0x" + "ef" * 20
     r = _send(client, {"slot": "escrow", "to_address": to,
                        "amount_uusdc": 990_000,
-                       "idempotency_key": "rel-1", "purpose": "escrow_release"})
+                       "idempotency_key": "rel-1", "purpose": "escrow_release", "network": "mainnet"})
     assert r.status_code == 200
     body = r.json()
     assert body["sent"] is True
@@ -303,7 +303,7 @@ def test_send_idempotent_retry(send_client):
     client, fake = send_client
     to = "0x" + "ef" * 20
     body = {"slot": "escrow", "to_address": to, "amount_uusdc": 990_000,
-            "idempotency_key": "rel-dup", "purpose": "escrow_release"}
+            "idempotency_key": "rel-dup", "purpose": "escrow_release", "network": "mainnet"}
     first = _send(client, body).json()
     second = _send(client, body).json()
     assert second["sent"] is True and second["idempotent"] is True
@@ -317,7 +317,7 @@ def test_send_cap_refused(send_client, monkeypatch):
     client, fake = send_client
     r = _send(client, {"slot": "escrow", "to_address": "0x" + "ef" * 20,
                        "amount_uusdc": 101, "idempotency_key": "cap-1",
-                       "purpose": "escrow_release"})
+                       "purpose": "escrow_release", "network": "mainnet"})
     assert r.json()["sent"] is False
     assert len(fake.eth.sent) == 0
 
@@ -327,7 +327,7 @@ def test_send_needs_mainnet_auth(send_client, monkeypatch):
     client, fake = send_client
     r = _send(client, {"slot": "escrow", "to_address": "0x" + "ef" * 20,
                        "amount_uusdc": 100, "idempotency_key": "auth-1",
-                       "purpose": "escrow_release"})
+                       "purpose": "escrow_release", "network": "mainnet"})
     assert r.status_code == 403
     assert r.json()["sent"] is False
     assert len(fake.eth.sent) == 0
@@ -421,3 +421,34 @@ def test_send_sepolia_ok_when_enabled(send_client, monkeypatch):
     # The tx hash is the deterministic hash of the signed bytes (known
     # before broadcast), not the node's echo — 0x + 64 hex either way.
     assert body["tx_hash"].startswith("0x") and len(body["tx_hash"]) == 66
+
+
+# --------------------------------------------------------------------------
+# ADVERSARIAL: network is REQUIRED — no mainnet default (ledger MAJOR).
+# --------------------------------------------------------------------------
+
+def test_send_network_missing_refused_4xx_no_broadcast(send_client):
+    """POST /internal/toll/send with a valid secret but NO network field
+    must be refused 4xx — a dropped field must never default to mainnet
+    and move real USDC. Asserts no broadcast was attempted."""
+    client, fake = send_client
+    r = _send(client, {"slot": "escrow", "to_address": "0x" + "ef" * 20,
+                       "amount_uusdc": 990_000,
+                       "idempotency_key": "adv-no-network",
+                       "purpose": "escrow_release"})
+    assert 400 <= r.status_code < 500, r.text
+    body = r.json()
+    assert body["sent"] is False
+    assert "network" in body["reason"].lower()
+    assert len(fake.eth.sent) == 0  # no broadcast attempted
+
+
+def test_verify_network_missing_refused_4xx(client):
+    """POST /internal/toll/deposit/verify with no network field is refused
+    4xx instead of silently verifying against mainnet."""
+    txh, sig, _, ref = new_deposit()
+    r = _post(client, {"slot": "escrow", "tx_hash": txh, "payer_sig": sig,
+                       "min_uusdc": 1_000_000, "ref": ref})
+    assert 400 <= r.status_code < 500, r.text
+    assert r.json()["verified"] is False
+    assert "network" in r.json()["reason"].lower()

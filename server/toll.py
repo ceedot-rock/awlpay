@@ -22,11 +22,14 @@ Endpoints:
         Rider's policy — this endpoint enforces the law, not the deal.
 
 Body: {"slot": "escrow"|"bonds", "tx_hash": "0x…", "payer_sig": "0x…",
-       "min_uusdc": 10000, "ref": "job:<job_id>", "network"?: "mainnet"|"sepolia"}
+       "min_uusdc": 10000, "ref": "job:<job_id>",
+       "network": "mainnet"|"sepolia"}  (REQUIRED — no default)
 
 network="sepolia" selects the Base Sepolia testnet path (chain 84532,
 Circle testnet USDC, separate wallets/keys/state) and requires
-TOLL_TESTNET_SEPOLIA=1. The default is mainnet. The two networks share
+TOLL_TESTNET_SEPOLIA=1. There is NO default: network is REQUIRED on
+both endpoints — a request without it is refused 4xx. A dropped field
+must never route to mainnet and move real money. The two networks share
 nothing — a testnet proof or transfer can never be mistaken for mainnet.
 
 The payer signs binding_message(tx_hash, "toll:<slot>:<ref>") with the
@@ -93,8 +96,16 @@ _SLOTS = ("escrow", "bonds")
 _MAX_BODY = 64 * 1024
 
 
+# Sentinel: the network field was not provided at all. A missing
+# network is a REFUSAL, never a mainnet default — a dropped field must
+# never move real money (ledger MAJOR, 2026-10-07: network REQUIRED).
+_NETWORK_MISSING = object()
+
+
 def _network_of(body: dict):
-    network = body.get("network", "mainnet")
+    network = body.get("network", _NETWORK_MISSING)
+    if network is _NETWORK_MISSING:
+        return _NETWORK_MISSING
     if network not in _NETWORKS:
         return None
     return network
@@ -145,44 +156,52 @@ def _rpc_call(urls):
 
 
 def _parse_body(raw: bytes):
+    """Parse a deposit-verify body.
+
+    Returns (parsed, None, None) on success, or (None, err, http_status)
+    on failure. http_status is 400 when network is MISSING (a dropped
+    field must be a loud 4xx refusal, never a silent mainnet default);
+    200 for the other shape errors (existing convention).
+    """
+    def _err(reason, status=200):
+        return None, {"verified": False, "reason": reason}, status
+
     try:
         body = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
-        return None, {"verified": False, "reason": "body is not JSON"}
+        return _err("body is not JSON")
     if not isinstance(body, dict):
-        return None, {"verified": False, "reason": "body must be a JSON object"}
+        return _err("body must be a JSON object")
     slot = body.get("slot")
     if slot not in _SLOTS:
-        return None, {"verified": False,
-                      "reason": "slot must be 'escrow' or 'bonds'"}
+        return _err("slot must be 'escrow' or 'bonds'")
     tx_hash = body.get("tx_hash")
     if not x402mod.valid_txhash(tx_hash):
-        return None, {"verified": False,
-                      "reason": "bad tx_hash format (want 0x + 64 hex)"}
+        return _err("bad tx_hash format (want 0x + 64 hex)")
     payer_sig = body.get("payer_sig")
     if not isinstance(payer_sig, str) or not payer_sig.strip():
-        return None, {"verified": False, "reason": "missing payer_sig: the "
-                      "depositing wallet must EIP-191 personal_sign "
-                      "binding_message(tx_hash, 'toll:<slot>:<ref>')"}
+        return _err("missing payer_sig: the depositing wallet must EIP-191 "
+                    "personal_sign binding_message(tx_hash, 'toll:<slot>:<ref>')")
     try:
         min_uusdc = int(body.get("min_uusdc"))
     except (TypeError, ValueError):
-        return None, {"verified": False,
-                      "reason": "min_uusdc must be an integer micro-USDC amount"}
+        return _err("min_uusdc must be an integer micro-USDC amount")
     if min_uusdc <= 0:
-        return None, {"verified": False, "reason": "min_uusdc must be > 0"}
+        return _err("min_uusdc must be > 0")
     ref = body.get("ref")
     if not isinstance(ref, str) or not ref.strip() or len(ref) > 128:
-        return None, {"verified": False,
-                      "reason": "ref must be a non-empty string (<=128 chars) "
-                                "identifying the toll intent, e.g. a job id"}
+        return _err("ref must be a non-empty string (<=128 chars) "
+                    "identifying the toll intent, e.g. a job id")
     network = _network_of(body)
+    if network is _NETWORK_MISSING:
+        return _err("network is required: pass 'mainnet' or 'sepolia' — "
+                    "there is no default; a dropped field never routes to "
+                    "mainnet", 400)
     if network is None:
-        return None, {"verified": False,
-                      "reason": "network must be 'mainnet' or 'sepolia'"}
+        return _err("network must be 'mainnet' or 'sepolia'")
     return {"slot": slot, "tx_hash": tx_hash.strip(), "payer_sig": payer_sig,
             "min_uusdc": min_uusdc, "ref": ref.strip(),
-            "network": network}, None
+            "network": network}, None, None
 
 
 def verify_deposit(slot: str, tx_hash: str, payer_sig: str, min_uusdc: int,
@@ -271,9 +290,9 @@ async def deposit_verify(request):
     raw = await request.body()
     if len(raw) > _MAX_BODY:
         return JSONResponse({"error": "body too large"}, status_code=413)
-    parsed, err = _parse_body(raw)
+    parsed, err, status = _parse_body(raw)
     if err is not None:
-        return JSONResponse(err)
+        return JSONResponse(err, status_code=status or 200)
     try:
         result = await anyio.to_thread.run_sync(
             lambda: verify_deposit(parsed["slot"], parsed["tx_hash"],
@@ -290,46 +309,54 @@ async def deposit_verify(request):
 
 def _parse_send_body(raw: bytes):
     """Body: {"slot", "to_address", "amount_uusdc", "idempotency_key",
-    "purpose", "network"?}. Amounts and recipients are Rider's policy —
+    "purpose", "network"}. Amounts and recipients are Rider's policy —
     this endpoint only enforces the toll law (auth, caps, idempotency,
-    per-network USDC). network defaults to "mainnet"."""
+    per-network USDC). network is REQUIRED — there is no default; a
+    missing field is refused 400 and never routes to mainnet.
+
+    Returns (parsed, None, None) on success, or (None, err, http_status)
+    on failure. http_status is 400 for the missing-network refusal, 200
+    for the other shape errors (existing convention).
+    """
+    def _err(reason, status=200):
+        return None, {"sent": False, "reason": reason}, status
+
     try:
         body = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
-        return None, {"sent": False, "reason": "body is not JSON"}
+        return _err("body is not JSON")
     if not isinstance(body, dict):
-        return None, {"sent": False, "reason": "body must be a JSON object"}
+        return _err("body must be a JSON object")
     slot = body.get("slot")
     if slot not in _SLOTS:
-        return None, {"sent": False,
-                      "reason": "slot must be 'escrow' or 'bonds'"}
+        return _err("slot must be 'escrow' or 'bonds'")
     to_address = body.get("to_address")
     if not isinstance(to_address, str) or not _ADDR_RE.match(to_address):
-        return None, {"sent": False,
-                      "reason": "bad to_address (want 0x + 40 hex)"}
+        return _err("bad to_address (want 0x + 40 hex)")
     try:
         amount_uusdc = int(body.get("amount_uusdc"))
     except (TypeError, ValueError):
-        return None, {"sent": False,
-                      "reason": "amount_uusdc must be an integer micro-USDC"}
+        return _err("amount_uusdc must be an integer micro-USDC")
     if amount_uusdc <= 0:
-        return None, {"sent": False, "reason": "amount_uusdc must be > 0"}
+        return _err("amount_uusdc must be > 0")
     key = body.get("idempotency_key")
     if not isinstance(key, str) or not key.strip() or len(key) > 128:
-        return None, {"sent": False, "reason": "idempotency_key must be a "
-                      "non-empty string (<=128 chars)"}
+        return _err("idempotency_key must be a non-empty string (<=128 chars)")
     purpose = body.get("purpose")
     if not isinstance(purpose, str) or not purpose.strip() \
             or len(purpose) > 64:
-        return None, {"sent": False, "reason": "purpose must be a non-empty "
-                      "string (<=64 chars), e.g. escrow_release"}
+        return _err("purpose must be a non-empty string (<=64 chars), "
+                    "e.g. escrow_release")
     network = _network_of(body)
+    if network is _NETWORK_MISSING:
+        return _err("network is required: pass 'mainnet' or 'sepolia' — "
+                    "there is no default; a dropped field never moves real "
+                    "money", 400)
     if network is None:
-        return None, {"sent": False,
-                      "reason": "network must be 'mainnet' or 'sepolia'"}
+        return _err("network must be 'mainnet' or 'sepolia'")
     return {"slot": slot, "to_address": to_address,
             "amount_uusdc": amount_uusdc, "idempotency_key": key.strip(),
-            "purpose": purpose.strip(), "network": network}, None
+            "purpose": purpose.strip(), "network": network}, None, None
 
 
 async def toll_send(request):
@@ -339,7 +366,9 @@ async def toll_send(request):
     secret, per-network authorization (TOLL_MAINNET_AUTHORIZED for mainnet,
     TOLL_TESTNET_SEPOLIA for sepolia), per-tx cap, daily cap, idempotency
     key, per-network-USDC-only, dedicated per-network broadcast path.
-    Refusals are 200 with sent:false; misconfiguration is 403.
+    network is REQUIRED in the body — a missing field is refused 400 and
+    never defaults to mainnet. Refusals are 200 with sent:false (400 for a
+    missing network); misconfiguration is 403.
     """
     if request.method != "POST":
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -350,9 +379,9 @@ async def toll_send(request):
     raw = await request.body()
     if len(raw) > _MAX_BODY:
         return JSONResponse({"error": "body too large"}, status_code=413)
-    parsed, err = _parse_send_body(raw)
+    parsed, err, status = _parse_send_body(raw)
     if err is not None:
-        return JSONResponse(err)
+        return JSONResponse(err, status_code=status or 200)
     from .chains import toll_send_usdc
     try:
         result = await anyio.to_thread.run_sync(

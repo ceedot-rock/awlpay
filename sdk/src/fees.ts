@@ -13,8 +13,9 @@ export interface FeeResult {
 }
 
 function freeFormula(amount_cents: number): number {
-  // integer cents: amount_cents * 10 // 1000 + 25
-  return Math.floor((amount_cents * 10) / 1000) + 25;
+  // Locked fee (Corey 2026-10-06): 0.5% flat, no fixed fee.
+  // Exact mirror of server/fees.py FREE_DIVISOR.
+  return Math.floor(amount_cents / 200);
 }
 
 /**
@@ -36,7 +37,9 @@ export function calculateFees(
   if (tier === 'pro') {
     const vol = ctx?.volume_month_usd_cents ?? 0;
     const txs = ctx?.txs_month ?? 0;
-    if (vol < pro_cap_volume && txs < pro_cap_txs) {
+    // Exact mirror of server/fees.py calculate_fees: under cap iff the
+    // CURRENT amount fits too — (volume_used + amount) <= cap.
+    if (vol + amount_cents <= pro_cap_volume && txs < pro_cap_txs) {
       return { platform_fee_cents: 0, trading_fee_cents, tier_applied: 'pro' };
     }
     return {

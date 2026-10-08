@@ -48,6 +48,7 @@ Env:
     AWL_HOST            bind address for run() (default 127.0.0.1; the
                         Dockerfile CMD passes 0.0.0.0 explicitly)
     AWL_ORACLE          "coingecko" for live prices, anything else = MockOracle
+                        (mock default logs a LOUD startup warning)
     AWL_LOCAL_DEV       "1" enables the X-Test-Payment local-dev bypass on
                         /execute (default OFF; loud warning when on).
                         AWL_TEST_MODE is RETIRED and inert.
@@ -91,6 +92,7 @@ import json
 import os
 import sys
 import threading
+import time
 from contextlib import asynccontextmanager
 
 import anyio
@@ -127,11 +129,40 @@ ALL_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 _oracle: PriceOracle | None = None
 _router = ConverterRouter()
 _signing_key = None
-_consumed_nonces: set[str] = set()
+# Idempotency nonces: nonce -> first-seen unix timestamp. BOUNDED and
+# TTL-evicted (24h, 50k entries max, oldest-first eviction by age) so the
+# set cannot grow without limit.
+#
+# LOUD DOCUMENTED BEHAVIOR: this memory is IN-PROCESS ONLY — a restart
+# wipes it. A retried idempotency_key after a restart is treated as a new
+# request (it executes again if the caller supplies a fresh payment
+# proof). The DURABLE replay guard is the x402 payment-proof set
+# (persist it via AWL_X402_STATE); the nonce is the cheap API-level
+# duplicate filter, and persisting it is out of proportion to its value.
+_NONCE_TTL_S = 24 * 3600
+_NONCE_MAX = 50_000
+_consumed_nonces: dict[str, float] = {}
 # Guards the atomic (idempotency-nonce + payment-hash) consume step in
 # _handle_execute: check-and-consume happens under one lock so two
 # concurrent requests cannot double-spend the same payment proof.
 _settle_lock = threading.Lock()
+
+
+def _evict_nonces(now: float) -> None:
+    """Keep _consumed_nonces bounded. Only runs when over the cap: drop
+    TTL-expired entries first, then the oldest by age (insertion
+    timestamps — never by key sort order, which would silently un-guard
+    live keys). Must be called with _settle_lock held."""
+    if len(_consumed_nonces) <= _NONCE_MAX:
+        return
+    expired = [k for k, ts in _consumed_nonces.items()
+               if now - ts >= _NONCE_TTL_S]
+    for k in expired:
+        del _consumed_nonces[k]
+    if len(_consumed_nonces) > _NONCE_MAX:
+        oldest = sorted(_consumed_nonces, key=_consumed_nonces.get)
+        for k in oldest[:len(_consumed_nonces) - _NONCE_MAX]:
+            del _consumed_nonces[k]
 
 
 def get_oracle() -> PriceOracle:
@@ -142,6 +173,13 @@ def get_oracle() -> PriceOracle:
                       note="TRUST ASSUMPTION: centralized feed")
             _oracle = CoinGeckoOracle()
         else:
+            # LOUD: the default is hardcoded mock prices, not market data.
+            # This runs once per process (the oracle is cached).
+            print("WARNING: AWL_ORACLE is not 'coingecko' — using HARDCODED "
+                  "MOCK prices, not live market data. Quotes are "
+                  "illustrative; do not treat them as executable market "
+                  "prices. Set AWL_ORACLE=coingecko for live prices.",
+                  file=sys.stderr, flush=True)
             _oracle = default_mock_oracle()
     return _oracle
 
@@ -315,16 +353,22 @@ def _consume_execution(idempotency_key,
 
     The idempotency nonce is checked FIRST so a caller replaying an old
     idempotency key does not burn a fresh payment proof on the 409.
+    Nonces expire after _NONCE_TTL_S (a lookup past the TTL is treated
+    as new) and the set is hard-bounded by _evict_nonces. Restart wipes
+    the set — see the LOUD note at _consumed_nonces.
     """
     with _settle_lock:
+        now = time.time()
         if isinstance(idempotency_key, str) and idempotency_key:
-            if idempotency_key in _consumed_nonces:
+            ts = _consumed_nonces.get(idempotency_key)
+            if ts is not None and now - ts < _NONCE_TTL_S:
                 return "replay: idempotency_key already used"
         if payment_replay_key is not None:
             if x402.is_payment_used(payment_replay_key):
                 return "replay: payment already used"
         if isinstance(idempotency_key, str) and idempotency_key:
-            _consumed_nonces.add(idempotency_key)
+            _consumed_nonces[idempotency_key] = now
+            _evict_nonces(now)
         if payment_replay_key is not None:
             x402.mark_payment_used(payment_replay_key)
     return None
@@ -548,9 +592,15 @@ app.add_middleware(RequestLogMiddleware)
 
 def run() -> None:
     get_signing_key()  # fail fast on a bad AWL_RELAYER_KEY
-def run() -> None:
-    get_signing_key()  # fail fast on a bad AWL_RELAYER_KEY
     import uvicorn
+    # LOUD: idempotency nonces live in process memory only — a restart
+    # wipes them (see _consumed_nonces). The x402 payment-proof replay
+    # guard is the durable one; persist it via AWL_X402_STATE.
+    print("WARNING: idempotency nonces are IN-MEMORY ONLY (24h TTL, 50k "
+          "cap) — a process restart wipes idempotency memory, and a "
+          "retried idempotency_key after restart is treated as new. "
+          "Persist the x402 payment-proof replay guard via AWL_X402_STATE.",
+          file=sys.stderr, flush=True)
     if os.environ.get("AWL_TEST_MODE", "0") == "1":
         print("WARNING: AWL_TEST_MODE is RETIRED and inert — it no longer "
               "enables any payment bypass. Use AWL_LOCAL_DEV=1 for the "

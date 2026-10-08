@@ -2,11 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateFees } from '../src/index.ts';
 
-// Gold from exact/FeeManager.cuni Bank fixtures (amount 10000 unless noted)
-describe('FeeManager calculateFees — SoT gold (exact/FeeManager.cuni)', () => {
-  it('free → platform_fee_cents=125, tier_applied=free', () => {
+// Gold from server/fees.py — the locked fee (Corey 2026-10-06):
+// free = 0.5% flat (amount_cents // 200), no fixed fee (amount 10000 unless noted)
+describe('FeeManager calculateFees — locked fee gold (server/fees.py)', () => {
+  it('free → platform_fee_cents=50, tier_applied=free', () => {
     const r = calculateFees(10000, 'free');
-    assert.equal(r.platform_fee_cents, 125);
+    assert.equal(r.platform_fee_cents, 50);
     assert.equal(r.tier_applied, 'free');
     assert.equal(r.trading_fee_cents, 0);
   });
@@ -20,21 +21,39 @@ describe('FeeManager calculateFees — SoT gold (exact/FeeManager.cuni)', () => 
     assert.equal(r.tier_applied, 'pro');
   });
 
-  it('pro overage volume (vol=3000000, txs=10) → 125, pro_overage', () => {
+  it('pro overage volume (vol=3000000, txs=10) → 50, pro_overage', () => {
     const r = calculateFees(10000, 'pro', {
       volume_month_usd_cents: 3000000,
       txs_month: 10,
     });
-    assert.equal(r.platform_fee_cents, 125);
+    assert.equal(r.platform_fee_cents, 50);
     assert.equal(r.tier_applied, 'pro_overage');
   });
 
-  it('pro overage txs (vol=100000, txs=500) → 125, pro_overage', () => {
+  it('pro overage txs (vol=100000, txs=500) → 50, pro_overage', () => {
     const r = calculateFees(10000, 'pro', {
       volume_month_usd_cents: 100000,
       txs_month: 500,
     });
-    assert.equal(r.platform_fee_cents, 125);
+    assert.equal(r.platform_fee_cents, 50);
+    assert.equal(r.tier_applied, 'pro_overage');
+  });
+
+  it('pro boundary: vol+amount == cap (2990000+10000) → 0, pro', () => {
+    const r = calculateFees(10000, 'pro', {
+      volume_month_usd_cents: 2990000,
+      txs_month: 0,
+    });
+    assert.equal(r.platform_fee_cents, 0);
+    assert.equal(r.tier_applied, 'pro');
+  });
+
+  it('pro boundary: vol+amount == cap+5000 (2995000+10000) → 50, pro_overage', () => {
+    const r = calculateFees(10000, 'pro', {
+      volume_month_usd_cents: 2995000,
+      txs_month: 0,
+    });
+    assert.equal(r.platform_fee_cents, 50);
     assert.equal(r.tier_applied, 'pro_overage');
   });
 

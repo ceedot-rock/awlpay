@@ -12,8 +12,9 @@ TIER_IDS = {"free": 0, "pro": 1, "l33t": 2}
 
 
 def _free_formula(amount_cents: int) -> int:
-    # integer cents: amount_cents * 10 // 1000 + 25
-    return amount_cents * 10 // 1000 + 25
+    # Locked fee (Corey 2026-10-06): 0.5% flat, no fixed fee.
+    # Exact mirror of server/fees.py FREE_DIVISOR.
+    return amount_cents // 200
 
 
 def calculate_fees(
@@ -26,7 +27,11 @@ def calculate_fees(
     if tier == "l33t":
         return {"platform_fee_cents": 0, "trading_fee_cents": 0, "tier_applied": "l33t"}
     if tier == "pro":
-        if volume_month_usd_cents < PRO_CAP_VOLUME and txs_month < PRO_CAP_TXS:
+        # Exact mirror of server/fees.py calculate_fees: under cap iff the
+        # CURRENT amount fits too — (volume_used + amount) <= cap.
+        under_cap = (volume_month_usd_cents + amount_cents <= PRO_CAP_VOLUME
+                     and txs_month < PRO_CAP_TXS)
+        if under_cap:
             return {"platform_fee_cents": 0, "trading_fee_cents": 0, "tier_applied": "pro"}
         return {
             "platform_fee_cents": _free_formula(amount_cents),
