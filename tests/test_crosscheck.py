@@ -100,6 +100,10 @@ def test_fixture_count_is_sane():
     assert len(runnable) == 18
 
 
+@pytest.mark.skipif(
+    not CUNI_BIN.exists(),
+    reason="cuni binary not built here — this gate runs on the dev VM",
+)
 @pytest.mark.parametrize("spec", SPEC_FILES)
 def test_cuni_check_passes(spec):
     """`cuni check --only py,js,ts,c,cpp <spec>` must exit 0.

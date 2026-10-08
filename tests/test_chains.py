@@ -28,6 +28,17 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+try:
+    import solders  # noqa: F401
+    _SOLDERS = True
+except ImportError:
+    _SOLDERS = False
+
+needs_solders = pytest.mark.skipif(
+    not _SOLDERS,
+    reason="solders is an optional Solana dep, intentionally not installed in CI",
+)
+
 from nacl.signing import SigningKey  # noqa: E402
 
 from server import chains, chamber, executor, settlement  # noqa: E402
@@ -157,6 +168,7 @@ def test_evm_eth_call_base_sepolia_dryrun():
 # --------------------------------------------------------------------------
 # Solana adapter: offline build/sign + simulate shape
 # --------------------------------------------------------------------------
+@needs_solders
 def test_solana_build_sign_offline():
     from solders.keypair import Keypair
     from solders.signature import Signature
@@ -181,6 +193,7 @@ def test_solana_build_sign_offline():
     assert ok is False and "spl_not_wired" in reason
 
 
+@needs_solders
 def test_solana_simulate_request_shape_and_results(monkeypatch):
     """simulateTransaction JSON-RPC shape + ok/err parsing, offline via a
     stubbed transport (no network)."""
@@ -213,6 +226,7 @@ def test_solana_simulate_request_shape_and_results(monkeypatch):
     assert out2["err"] == {"InstructionError": [0, "InsufficientFunds"]}
 
 
+@needs_solders
 def test_solana_simulate_devnet_live():
     """Real simulateTransaction against devnet. Skips when unreachable."""
     ad = chains.SolanaAdapter()
