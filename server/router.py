@@ -13,6 +13,7 @@ Nodes are (chain, token) pairs. Edges carry a "hop" type:
     "bridge" — same token across chains (cross-chain bridge)
     "ccip"   — same token across chains via the Chainlink CCIP 2.0 rail
     "swap"   — different tokens on the same chain (DEX-style swap)
+    "fiat"   — USD (PayPal rail) <-> USDC on a chain (fiat bridge)
 Pathfinding is plain BFS over the legal subgraph (all tokens priced).
 """
 
@@ -25,8 +26,8 @@ from .oracle import PriceOracle
 # --------------------------------------------------------------------------
 # v1 static graph (chains/tokens from the locked product spec)
 # --------------------------------------------------------------------------
-CHAINS = ["ethereum", "base", "polygon", "arbitrum", "solana"]
-TOKENS = ["USDC", "ETH", "SOL"]
+CHAINS = ["ethereum", "base", "polygon", "arbitrum", "solana", "paypal"]
+TOKENS = ["USDC", "ETH", "SOL", "USD"]
 
 # Same-token cross-chain bridge hops: (chain_a, chain_b) pairs for USDC.
 # Bridges move the token, not the value — both ends are USDC, so no
@@ -64,6 +65,19 @@ SWAPS = [
     ("solana", "SOL", "USDC"),
 ]
 
+# Fiat bridge hops (added 2026-10-09, PayPal rail): USD on the "paypal"
+# chain <-> USDC on each USDC chain. 1 USD = 1 USDC by definition (unit
+# of account); the lab fee applies on the USD leg (see server/paypal.py
+# quote_fiat_bridge). Lets the anything-to-anything router path through
+# fiat: e.g. USD(paypal) -> USDC(base) -> ETH(base).
+FIAT_BRIDGES = [
+    ("paypal", "ethereum"),
+    ("paypal", "base"),
+    ("paypal", "polygon"),
+    ("paypal", "arbitrum"),
+    ("paypal", "solana"),
+]
+
 
 def _build_graph() -> dict[tuple[str, str], list[dict]]:
     """adjacency: node -> [{chain, token, hop}, ...]"""
@@ -82,6 +96,7 @@ def _build_graph() -> dict[tuple[str, str], list[dict]]:
         "polygon": ["USDC", "ETH"],
         "arbitrum": ["USDC", "ETH"],
         "solana": ["USDC", "SOL"],
+        "paypal": ["USD"],
     }
     for chain, tokens in supported.items():
         for token in tokens:
@@ -103,6 +118,13 @@ def _build_graph() -> dict[tuple[str, str], list[dict]]:
             add_edge(na, nb, "swap")
             add_edge(nb, na, "swap")
 
+    for fiat_chain, usdc_chain in FIAT_BRIDGES:
+        n_usd = node(fiat_chain, "USD")
+        n_usdc = node(usdc_chain, "USDC")
+        if n_usd in graph and n_usdc in graph:
+            add_edge(n_usd, n_usdc, "fiat")
+            add_edge(n_usdc, n_usd, "fiat")
+
     return graph
 
 
@@ -119,7 +141,7 @@ class ConverterRouter:
                   to_chain: str, to_token: str,
                   oracle: PriceOracle) -> list[dict] | None:
         """Return the path as a list of steps:
-            [{"chain", "token", "hop": "origin"|"bridge"|"swap"}, ...]
+            [{"chain", "token", "hop": "origin"|"bridge"|"ccip"|"swap"|"fiat"}, ...]
         or None when no legal path exists. A path is legal only if every
         token on it hasValue() per the oracle."""
         src = (str(from_chain).lower(), str(from_token).upper())

@@ -62,12 +62,17 @@ class CoinGeckoOracle(PriceOracle):
     Failures of ANY kind (network, timeout, bad JSON, missing field)
     return None — never raise, never fabricate a price. See the trust
     assumption at the top of this file.
+
+    Exception: ("paypal", "USD") is the unit of account — 1.0 by
+    definition, not a market price — so it never consults the feed.
     """
 
     def __init__(self, timeout: float = _TIMEOUT_S):
         self.timeout = timeout
 
     def get_price_usd(self, chain: str, token: str) -> float | None:
+        if chain.lower() == "paypal" and token.upper() == "USD":
+            return 1.0  # unit of account: definitional, not market
         coin_id = _COINGECKO_IDS.get((chain.lower(), token.upper()))
         if coin_id is None:
             return None
@@ -111,4 +116,5 @@ def default_mock_oracle() -> MockOracle:
     prices[("solana", "SOL")] = 150.0
     prices[("solana", "USDC")] = 1.0
     prices[("xrpl", "XRP")] = 2.0
+    prices[("paypal", "USD")] = 1.0  # unit of account (fiat bridge)
     return MockOracle(prices)
