@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: AwLPay
+authors:
+  - family-names: Tasz
+    given-names: Corey
+    email: corey@slidphilabs.com
+    affiliation: Slid Phi Labs
+version: "1.0"
+date-released: 2026-10-09
+repository-code: "https://github.com/ceedot-rock/awlpay"
+url: "https://awlpay.fly.dev"
+license: Apache-2.0
+abstract: "Multi-rail agent payments: free conversion quotes across USDC on EVM chains and Solana plus a sandbox-only PayPal fiat bridge, x402-gated execution, Ed25519-signed receipts, integer-cents fee math (Free 0.5%/tx)."

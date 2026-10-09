@@ -5,19 +5,44 @@
 [![npm](https://img.shields.io/npm/v/awlpay.svg)](https://www.npmjs.com/package/awlpay)
 [![PyPI](https://img.shields.io/pypi/v/awlpay.svg)](https://pypi.org/project/awlpay/)
 
-**Live: https://awlpay.fly.dev** — the payment product with no allowlist.
-Five chains, three tokens — if the token has a verifiable price and a
-priced path exists, it pays.
-
-AwLPay is the money rail for agents. Quote a conversion for free
-(`POST /api/pay/quote`), execute behind a 1¢ x402 payment gate
+**AwLPay** is the money rail for AI agents: quote a conversion for free
+(`POST /api/pay/quote`), execute behind an x402 payment gate
 (`POST /api/pay/execute`), and every execution carries an Ed25519-signed
-receipt attesting to the exact law that ran. When the math doesn't work it
-refuses with a reason — never a bad rate.
+receipt attesting to the exact law that ran. Five chains (ethereum, base,
+polygon, arbitrum, solana) with USDC bridged between them, plus a PayPal fiat
+bridge (USD ↔ USDC, sandbox-only) — if a token has a verifiable price and a
+priced path exists, it pays; when the math doesn't work it refuses with a
+reason, never a bad rate. The Free tier costs 0.5% per transaction, no fixed
+fee, all fee math in integer cents and machine-verified against the CuNi law
+fixtures in `spec/`. Live at https://awlpay.fly.dev.
 
 **The server is the product.** `server/` is a Python (Starlette) service that
 is live in production, has moved real USDC through its toll engine, and
 earned real toll revenue. Everything else in this repo is tooling around it.
+
+## Install and quick start
+
+```bash
+git clone https://github.com/ceedot-rock/awlpay.git
+cd awlpay
+pip install -r server/requirements.txt
+# generate a relayer signing key for this deploy (receipts are Ed25519-signed)
+export AWL_RELAYER_KEY=$(python3 -c "from nacl.signing import SigningKey; print(SigningKey.generate().encode().hex())")
+uvicorn server.app:app --host 127.0.0.1 --port 8899
+```
+
+A quote is free and returns the path, the fee, and the net:
+
+```bash
+curl -X POST http://127.0.0.1:8899/api/pay/quote \
+  -H 'Content-Type: application/json' \
+  -d '{"from_chain":"base","from_token":"USDC","to_chain":"solana","to_token":"USDC","amount_cents":10000}'
+# → path base USDC → solana USDC, fee 50¢, net 9950¢ (free tier: amount // 200)
+```
+
+`GET /healthz` → `{"ok": true, "version", "mode"}`. PayPal bridge is
+sandbox-only by construction (`server/paypal.py` hard-refuses the production
+endpoint); XRPL helpers are testnet read-only.
 
 ## What's in this repo
 
@@ -485,3 +510,13 @@ awlpay/
   openapi.yaml             STALE: describes the old /v1/* TS surface, not live
   .github/workflows/ci.yml runs Python tests + SDK tests + tsc on every push
 ```
+
+## From the same lab
+
+- **agenTill** — drop-in payment box that turns any online product into a storefront agents can buy from: https://github.com/ceedot-rock/agenTill
+- **ExactOdds** — provably-fair game math, byte-identical rules across five languages: https://github.com/ceedot-rock/exactodds
+- **TNSSRC** — local lossless compression engine (Silesia 43,724,575 bytes, 12/12 decode+SHA verified): https://github.com/ceedot-rock/neural-pcc
+- **pulsar** — free local best-path compressor (GPLv3 demo, not PCC): https://github.com/ceedot-rock/pulsar-best
+- **TRUSTREAM** — lossless compression for live data streams in 4 KiB tiles: https://github.com/ceedot-rock/trustream
+- **Chamber** — two-key JSON sealing for secrets: https://github.com/ceedot-rock/json-chamber-sdk
+- Lab site: https://www.slidphilabs.com
