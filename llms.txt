@@ -1,0 +1,25 @@
+# AwLPay
+
+AwLPay is the multi-rail payment product for AI agents from Slid Phi Labs. Quote a conversion for free (`POST /api/pay/quote`), execute behind an x402 payment gate (`POST /api/pay/execute`), and every execution carries an Ed25519-signed receipt attesting to the exact law that ran. If a token has a verifiable price and a priced path exists, it pays; when the math doesn't work it refuses with a reason — never a bad rate. Live at https://awlpay.fly.dev.
+
+## Key facts
+
+- Rails: USDC on ethereum, base, polygon, arbitrum, solana (bridged via Chainlink CCIP), plus a PayPal fiat bridge (USD ↔ USDC, **sandbox-only** — production endpoint hard-refused). XRPL helpers are testnet read-only.
+- Free quote endpoint; `execute` is 402-gated (cost-plus toll, 1¢ floor).
+- Fee tiers (all integer cents, machine-verified against CuNi fixtures in `spec/`): Free 0.5%/tx, no fixed fee (`amount_cents // 200`); Pro $39/mo, $0 under $30k volume OR 500 txs/mo (overage falls back to free pricing); L33t $799/mo unlimited with fair-use compute guard.
+- Server: Python (Starlette) in `server/`, `uvicorn server.app:app --port 8899`. `GET /healthz` for health.
+- SDK: TypeScript client (`sdk/`) targets the old `/v1/*` prototype routes — needs a remap to `/api/pay/*` before use against the live server. MCP server (`mcp/`) speaks the live routes.
+- License: Apache-2.0.
+- Contact: corey@slidphilabs.com. Lab: https://www.slidphilabs.com
+
+## Quick start
+
+```bash
+git clone https://github.com/ceedot-rock/awlpay.git && cd awlpay
+pip install -r server/requirements.txt
+export AWL_RELAYER_KEY=$(python3 -c "from nacl.signing import SigningKey; print(SigningKey.generate().encode().hex())")
+uvicorn server.app:app --host 127.0.0.1 --port 8899
+curl -X POST http://127.0.0.1:8899/api/pay/quote \
+  -H 'Content-Type: application/json' \
+  -d '{"from_chain":"base","from_token":"USDC","to_chain":"solana","to_token":"USDC","amount_cents":10000}'
+```
