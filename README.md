@@ -1,3 +1,7 @@
+> **This repo has moved into the verse.** Development continues at
+> [ceedot-rock/WalletVerse](https://github.com/ceedot-rock/WalletVerse), in folder awlpay/.
+> This copy is archived and read-only - history preserved, nothing lost.
+
 # AwLPay
 
 [![Audited checks](https://github.com/ceedot-rock/awlpay/actions/workflows/audited-checks.yml/badge.svg)](https://github.com/ceedot-rock/awlpay/actions/workflows/audited-checks.yml)
